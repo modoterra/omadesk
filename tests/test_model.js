@@ -349,13 +349,23 @@ test("16 forgetDesk removes recipe only", function() {
   assert.strictEqual(gone.desks.length, 2)
 })
 
-test("17 default extras launchMissing true, dnd leave", function() {
+test("17 default extras launchMissing true, dnd leave, theme leave", function() {
   const extras = model.defaultExtras()
   assert.strictEqual(extras.launchMissing, true)
   assert.strictEqual(extras.dnd, "leave")
+  assert.strictEqual(extras.theme, "leave")
   assert.strictEqual(model.dndAction(extras), null)
   assert.strictEqual(model.dndAction({ dnd: "on" }), "on")
   assert.strictEqual(model.dndAction({ dnd: "off" }), "off")
+  assert.strictEqual(model.themeAction(extras), null)
+  assert.strictEqual(model.themeAction({ theme: "leave" }), null)
+  assert.strictEqual(model.themeAction({ theme: "Dazzle Dusk" }), "Dazzle Dusk")
+  same(model.parseThemeList("Aether\nCatppuccin\nDazzle Dusk\n\nTokyo Night\n"), [
+    "Aether",
+    "Catppuccin",
+    "Dazzle Dusk",
+    "Tokyo Night"
+  ])
 })
 
 test("18 cursor h/j/k/l and jump 1-9", function() {
@@ -429,10 +439,10 @@ test("20 extras helpers, cards, currentSlug, guessExec", function() {
     model.desksPath("/home/hallas"),
     "/home/hallas/.config/omarchy/omadesk/desks.json"
   )
-  const merged = model.setExtras(model.demoDesks(), "writing", { dnd: "off", theme: "dusk" })
+  const merged = model.setExtras(model.demoDesks(), "writing", { dnd: "off", theme: "Dazzle Dusk" })
   const writing = merged.desks.filter((d) => d.id === "writing")[0]
   assert.strictEqual(writing.extras.dnd, "off")
-  assert.ok(!writing.extras.theme)
+  assert.strictEqual(writing.extras.theme, "Dazzle Dusk")
   const saved = model.saveDesk(model.emptyState(), model.snapshotRecipe(
     model.parseStage(clientsText, workspacesText),
     "Writing",
@@ -457,5 +467,92 @@ function isArray(value) {
   return Array.isArray(value)
 }
 
-assert.strictEqual(tests, 22)
+test("21 launchMissing after restore, not the pre-park other desk", function() {
+  const desk = {
+    extras: model.defaultExtras(),
+    workspaces: [{
+      n: 1,
+      windows: [{ class: "chromium", title: "Meet", exec: ["chromium", "--new-window"] }]
+    }]
+  }
+  const otherDeskOnStage = {
+    windows: [{ address: "0xAAA", class: "chromium", title: "draft", workspace: 1 }],
+    parked: []
+  }
+  const skipped = model.launchMissingPlan(desk, otherDeskOnStage).launches
+  assert.strictEqual(skipped.length, 0)
+  const postRestoreMissing = { windows: [], parked: [] }
+  const launched = model.launchMissingPlan(desk, postRestoreMissing).launches
+  assert.strictEqual(launched.length, 1)
+  same(launched[0].exec, ["chromium", "--new-window"])
+  const postRestorePresent = {
+    windows: [{ address: "0xBBB", class: "chromium", title: "Meet", workspace: 1 }],
+    parked: []
+  }
+  same(model.launchMissingPlan(desk, postRestorePresent).launches, [])
+})
+
+test("22 forgetRestorePlan moves parked windows onto 1-10", function() {
+  const plan = model.forgetRestorePlan(clientsText, { id: "call", name: "Call" })
+  assert.strictEqual(plan.dispatches.length, 2)
+  plan.dispatches.forEach((lua) => {
+    assert.ok(/workspace = "[12]"/.test(lua))
+    assert.ok(lua.indexOf("omadesk-") === -1)
+    assert.ok(lua.indexOf("scratchpad") === -1)
+  })
+  const empty = model.forgetRestorePlan("[]", { id: "review" })
+  same(empty.dispatches, [])
+  const gone = model.forgetDesk(model.demoDesks(), "call")
+  assert.strictEqual(gone.desks.filter((d) => d.id === "call").length, 0)
+})
+
+test("23 unsaved card and +new parks to unnamed lots", function() {
+  const named = model.demoDesks()
+  const without = model.pickerCards(named, "")
+  assert.strictEqual(without.filter((c) => c.kind === "unsaved").length, 0)
+  const left = model.leaveDesk(named)
+  const cards = model.pickerCards(left, "")
+  assert.strictEqual(cards[0].kind, "unsaved")
+  assert.strictEqual(cards[0].name, "Unsaved")
+  assert.strictEqual(cards[0].here, true)
+  assert.ok(cards.filter((c) => c.kind === "new").length === 1)
+  const parkedUnnamed = {
+    windows: [],
+    parked: [{
+      slug: "unnamed",
+      n: 1,
+      address: "0x111",
+      class: "dev.zed.Zed",
+      title: "scratch"
+    }]
+  }
+  const parkedCards = model.pickerCards(named, "", parkedUnnamed)
+  assert.strictEqual(parkedCards[0].kind, "unsaved")
+  assert.strictEqual(parkedCards[0].here, false)
+  assert.ok(parkedCards[0].tiles[0].label.indexOf("Zed") >= 0)
+  const filtered = model.pickerCards(left, "ca")
+  assert.strictEqual(filtered.filter((c) => c.kind === "unsaved").length, 0)
+  const stage = model.parseStage(clientsText, workspacesText)
+  const fresh = model.freshPlan(stage, "unnamed")
+  fresh.park.dispatches.forEach((lua) => {
+    assert.ok(lua.indexOf("special:omadesk-unnamed-") >= 0)
+  })
+})
+
+test("24 broader exec guesses and gtk-launch desktop ids", function() {
+  same(model.guessExec({ class: "org.gnome.Nautilus" }), ["gtk-launch", "org.gnome.Nautilus.desktop"])
+  same(model.guessExec({ class: "org.mozilla.firefox" }), ["gtk-launch", "org.mozilla.firefox.desktop"])
+  same(model.guessExec({ class: "com.obsproject.Studio" }), ["gtk-launch", "com.obsproject.Studio.desktop"])
+  same(model.guessExec({ class: "firefox" }), ["firefox"])
+  same(model.guessExec({ class: "steam" }), ["steam"])
+  same(model.guessExec({ class: "cursor" }), ["cursor"])
+  same(
+    model.resolveExec({ class: "org.gnome.Nautilus", exec: ["nautilus"] }),
+    ["gtk-launch", "org.gnome.Nautilus.desktop"]
+  )
+  assert.ok(model.isDesktopIdClass("org.gnome.Nautilus"))
+  assert.ok(!model.isDesktopIdClass("chromium"))
+})
+
+assert.strictEqual(tests, 26)
 console.log("ok")

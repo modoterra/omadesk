@@ -9,7 +9,7 @@ function emptyState() {
 }
 
 function defaultExtras() {
-  return { dnd: "leave", launchMissing: true }
+  return { dnd: "leave", theme: "leave", launchMissing: true }
 }
 
 function desksPath(home) {
@@ -281,9 +281,48 @@ function guessExec(win) {
   if (lower.indexOf("chromium") >= 0 || last === "chromium" || last === "chrome" || last === "google-chrome") {
     return ["chromium", "--new-window"]
   }
-  if (/^com(\.[a-z0-9-]+)+$/.test(lower)) return ["gtk-launch", cls + ".desktop"]
+  var known = knownDesktopExec(lower, last)
+  if (known && known.length) return known
+  if (isDesktopIdClass(cls)) return ["gtk-launch", cls + ".desktop"]
   if (/^[a-z][a-z0-9-]+$/.test(lower) && lower.indexOf("__") === -1) return [lower]
   return []
+}
+
+function isDesktopIdClass(cls) {
+  return /^(com|org|io|net|dev|app|eu|de|me)(\.[A-Za-z0-9-]+)+$/.test(String(cls || ""))
+}
+
+function knownDesktopExec(lower, last) {
+  var key = String(lower || "")
+  var tail = String(last || "")
+  var map = {
+    "firefox": ["firefox"],
+    "firefox-esr": ["firefox"],
+    "org.mozilla.firefox": ["gtk-launch", "org.mozilla.firefox.desktop"],
+    "slack": ["gtk-launch", "slack.desktop"],
+    "discord": ["gtk-launch", "discord.desktop"],
+    "steam": ["steam"],
+    "spotify": ["spotify"],
+    "code": ["code"],
+    "code - oss": ["code"],
+    "cursor": ["cursor"],
+    "nautilus": ["gtk-launch", "org.gnome.Nautilus.desktop"],
+    "org.gnome.nautilus": ["gtk-launch", "org.gnome.Nautilus.desktop"],
+    "foot": ["foot"],
+    "alacritty": ["alacritty"],
+    "kitty": ["kitty"],
+    "mpv": ["mpv"],
+    "obs": ["gtk-launch", "com.obsproject.Studio.desktop"],
+    "com.obsproject.studio": ["gtk-launch", "com.obsproject.Studio.desktop"],
+    "telegram": ["telegram-desktop"],
+    "org.telegram.desktop": ["gtk-launch", "org.telegram.desktop.desktop"],
+    "signal": ["signal-desktop"],
+    "signal-desktop": ["signal-desktop"],
+    "obsidian": ["obsidian"]
+  }
+  if (map[key]) return map[key]
+  if (map[tail]) return map[tail]
+  return null
 }
 
 function chromePwaExec(cls) {
@@ -560,6 +599,11 @@ function forgetDesk(state, deskId) {
   return next
 }
 
+function forgetRestorePlan(clientsJson, desk) {
+  var slug = desk && typeof desk === "object" ? (desk.id || desk.name) : desk
+  return restorePlan(clientsJson, slug, desk && typeof desk === "object" ? desk : null)
+}
+
 function setExtras(state, deskId, extras) {
   var next = normalizeState(state)
   var i
@@ -578,12 +622,38 @@ function dndAction(extras) {
   return null
 }
 
-function pickerCards(state, query) {
+function themeAction(extras) {
+  var theme = extras && extras.theme
+  if (theme == null || theme === "") return null
+  theme = String(theme)
+  if (theme === "leave" || theme === "set" || theme === "set…") return null
+  return theme
+}
+
+function parseThemeList(text) {
+  var raw = String(text || "").split(/\r?\n/)
+  var out = []
+  var seen = {}
+  var i
+  for (i = 0; i < raw.length; i++) {
+    var name = String(raw[i] || "").replace(/^\s+|\s+$/g, "")
+    if (!name) continue
+    if (name.indexOf("Usage:") === 0) continue
+    if (seen[name]) continue
+    seen[name] = true
+    out.push(name)
+  }
+  return out
+}
+
+function pickerCards(state, query, stage) {
   var st = state || emptyState()
   var q = normalizeQuery(query)
   var desks = filterDesks(st.desks || [], q)
   var cards = []
   var i
+  var unsaved = q === "" ? unsavedCard(st, stage) : null
+  if (unsaved) cards.push(unsaved)
   for (i = 0; i < desks.length; i++) {
     var desk = desks[i]
     cards.push({
@@ -599,6 +669,61 @@ function pickerCards(state, query) {
   }
   if (q === "") cards.push({ kind: "new", name: "+ new desk", meta: "enter starts empty", tiles: [] })
   return cards
+}
+
+function unnamedParkedWindows(stage) {
+  var parked = stage && isArray(stage.parked) ? stage.parked : []
+  var out = []
+  var i
+  for (i = 0; i < parked.length; i++) {
+    if (parked[i] && parked[i].slug === "unnamed") out.push(parked[i])
+  }
+  return out
+}
+
+function parkedToStage(parked) {
+  var groups = {}
+  var windows = []
+  var i
+  var n
+  for (i = 0; i < parked.length; i++) {
+    var p = parked[i] || {}
+    n = Number(p.n)
+    var win = {
+      address: p.address,
+      class: p.class,
+      initialClass: p.initialClass,
+      title: p.title,
+      floating: !!p.floating,
+      monitor: p.monitor,
+      workspace: n
+    }
+    windows.push(win)
+    if (n >= 1 && n <= 10) {
+      if (!groups[n]) groups[n] = []
+      groups[n].push(win)
+    }
+  }
+  var wss = []
+  for (n = 1; n <= 10; n++) {
+    if (groups[n]) wss.push({ n: n, windows: groups[n] })
+  }
+  return { workspaces: wss, windows: windows, parked: [], lastWorkspace: wss.length ? wss[0].n : 1 }
+}
+
+function unsavedCard(state, stage) {
+  var here = !state || state.currentId == null || state.currentId === ""
+  var parked = unnamedParkedWindows(stage)
+  if (!here && !parked.length) return null
+  var tiles = here ? previewTiles(stage, 3) : previewTiles(parkedToStage(parked), 3)
+  return {
+    kind: "unsaved",
+    name: "Unsaved",
+    here: !!here,
+    dnd: false,
+    tiles: tiles,
+    meta: here ? "this room is not saved" : "parked untitled room"
+  }
 }
 
 function deskSpaceMeta(desk) {
@@ -892,11 +1017,14 @@ function isScratchpadish(w) {
 function mergeExtras(base, extra) {
   var out = {
     dnd: "leave",
+    theme: "leave",
     launchMissing: true
   }
   if (base && (base.dnd === "on" || base.dnd === "off" || base.dnd === "leave")) out.dnd = base.dnd
+  if (base && typeof base.theme === "string" && base.theme !== "") out.theme = base.theme
   if (base && base.launchMissing === false) out.launchMissing = false
   if (extra && (extra.dnd === "on" || extra.dnd === "off" || extra.dnd === "leave")) out.dnd = extra.dnd
+  if (extra && typeof extra.theme === "string" && extra.theme !== "") out.theme = extra.theme
   if (extra && extra.launchMissing === false) out.launchMissing = false
   if (extra && extra.launchMissing === true) out.launchMissing = true
   return out

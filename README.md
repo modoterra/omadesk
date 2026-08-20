@@ -66,12 +66,12 @@ o.bind("SUPER + D", "Desks", "omarchy-shell shell toggle com.mdtrr.omadesk")
 | type | filter |
 | j / k, arrows, h l | move cursor |
 | 1–9 | jump to card |
-| enter | switch, or start an empty unsaved desk on **+ new desk** |
+| enter | switch, return to **Unsaved**, or start an empty unsaved desk on **+ new desk** |
 | n | save current as a named desk |
 | s | update desk you are on |
 | r | rename (display name; parking id stays) |
-| e | extras (DND leave/on/off, launch missing, theme leave) |
-| del | forget, with confirm |
+| e | extras (DND leave/on/off, launch missing, theme leave or set) |
+| del | forget, with confirm (parked windows return to 1–10) |
 | esc | close (clear filter first if any) |
 
 ## Remove
@@ -81,7 +81,9 @@ omarchy plugin remove com.mdtrr.omadesk
 ```
 
 Recipes live in `~/.config/omarchy/omadesk/desks.json`. Forget deletes the
-recipe only. Open windows stay; nothing is killed.
+recipe and brings that desk's parked windows back onto 1–10. Nothing is
+killed. Theme extras can leave the current theme or run `omarchy theme set`
+when you switch into that desk.
 
 ## Tests
 

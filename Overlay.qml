@@ -38,6 +38,12 @@ Item {
   property var pendingDnd: ""
   property string switchToId: ""
   property bool leavingForFresh: false
+  property bool restoringUnsaved: false
+  property var pendingDesk: null
+  property string pendingTheme: ""
+  property bool extrasPickingTheme: false
+  property var themeNames: []
+  property string pendingForgetId: ""
 
   property color background: Color.menu.background
   property color foreground: Color.menu.text
@@ -121,11 +127,17 @@ Item {
   }
 
   function cancelDialog() {
+    if (root.mode === "extras" && root.extrasPickingTheme) {
+      root.extrasPickingTheme = false
+      Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+      return
+    }
     root.mode = "picker"
     root.nameText = ""
     root.targetDesk = null
     root.extrasDesk = null
     root.forgetDesk = null
+    root.extrasPickingTheme = false
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
@@ -210,11 +222,52 @@ Item {
     if (dnd === true) dnd = "on"
     if (dnd === false) dnd = "off"
     if (dnd !== "on" && dnd !== "off") dnd = "leave"
+    var theme = extras.theme
+    if (!theme || theme === "set" || theme === "set…") theme = "leave"
+    else theme = String(theme)
     return {
       dnd: dnd,
-      theme: "leave",
+      theme: theme,
       launchMissing: launchYes
     }
+  }
+
+  function patchExtras(patch) {
+    var next = {
+      dnd: root.extrasDraft && root.extrasDraft.dnd ? root.extrasDraft.dnd : "leave",
+      theme: root.extrasDraft && root.extrasDraft.theme ? root.extrasDraft.theme : "leave",
+      launchMissing: !(root.extrasDraft && root.extrasDraft.launchMissing === false)
+    }
+    if (patch) {
+      if (patch.dnd !== undefined) next.dnd = patch.dnd
+      if (patch.theme !== undefined) next.theme = patch.theme
+      if (patch.launchMissing !== undefined) next.launchMissing = patch.launchMissing
+    }
+    root.extrasDraft = next
+  }
+
+  function themeChipLabel() {
+    var theme = root.extrasDraft && root.extrasDraft.theme ? String(root.extrasDraft.theme) : "leave"
+    if (!theme || theme === "leave") return "set…"
+    return theme
+  }
+
+  function beginThemePick() {
+    root.extrasPickingTheme = true
+    root.loadThemes()
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function pickTheme(name) {
+    root.patchExtras({ theme: name || "leave" })
+    root.extrasPickingTheme = false
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function loadThemes() {
+    if (themeListProc.running) return
+    themeListProc.command = ["omarchy", "theme", "list"]
+    themeListProc.running = true
   }
 
   function tileLabel(client) {
@@ -302,7 +355,7 @@ Item {
   function rebuildCards() {
     var cards = []
     if (typeof Model.pickerCards === "function") {
-      try { cards = Model.pickerCards(root.desksState, root.filterText) || [] } catch (e) { cards = [] }
+      try { cards = Model.pickerCards(root.desksState, root.filterText, root.stage) || [] } catch (e) { cards = [] }
     }
     if (!Array.isArray(cards) || cards.length === 0) {
       var desks = root.deskList()
@@ -329,7 +382,7 @@ Item {
     }
     if (!hasNew && !root.filterText) cards.push(root.newDeskCard())
     for (var t = 0; t < cards.length; t++) {
-      if (!cards[t] || cards[t].kind === "new") continue
+      if (!cards[t] || cards[t].kind === "new" || cards[t].kind === "unsaved") continue
       if (cards[t].tiles && cards[t].tiles.length) continue
       var src = root.deskById(cards[t].id) || cards[t].desk || cards[t]
       cards[t].tiles = root.tilesFrom(src, 3)
@@ -355,7 +408,7 @@ Item {
 
   function highlightedDesk() {
     var card = root.highlightedCard()
-    if (card && card.kind !== "new")
+    if (card && card.kind === "desk")
       return root.deskById(card.id) || card.desk || null
     return root.deskById(root.desksState ? root.desksState.currentId : null)
   }
@@ -484,8 +537,10 @@ Item {
     var desk = root.highlightedDesk()
     if (!desk) return
     root.mode = "extras"
+    root.extrasPickingTheme = false
     root.extrasDesk = desk
     root.extrasDraft = root.extrasOf(desk)
+    root.loadThemes()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
@@ -583,23 +638,53 @@ Item {
   function confirmForget() {
     var desk = root.forgetDesk
     if (!desk) { root.cancelDialog(); return }
+    if (root.busy) return
+    root.busy = true
+    root.pendingForgetId = String(desk.id)
+    root.refreshStage(function(ok) {
+      if (!ok) {
+        root.busy = false
+        root.pendingForgetId = ""
+        return
+      }
+      var restoreBatch = ""
+      if (typeof Model.forgetRestorePlan === "function") {
+        try { restoreBatch = root.batchString(Model.forgetRestorePlan(root.clientsJson, desk)) } catch (e) { restoreBatch = "" }
+      } else if (typeof Model.restorePlan === "function") {
+        try { restoreBatch = root.batchString(Model.restorePlan(root.clientsJson, desk.id, desk)) } catch (e) { restoreBatch = "" }
+      }
+      if (restoreBatch) {
+        root.pendingRestore = restoreBatch
+        root.startBatch(restoreBatch, "forget-restore")
+        return
+      }
+      root.finishForget()
+    })
+  }
+
+  function finishForget() {
+    var id = root.pendingForgetId
     var next = null
     if (typeof Model.forgetDesk === "function") {
-      try { next = Model.forgetDesk(root.desksState, desk.id) } catch (e) { next = null }
+      try { next = Model.forgetDesk(root.desksState, id) } catch (e) { next = null }
     }
     if (!next) {
       next = Util.cloneJson(root.desksState || root.emptyState())
       var kept = []
       var desks = next.desks || []
       for (var i = 0; i < desks.length; i++) {
-        if (String(desks[i].id) !== String(desk.id)) kept.push(desks[i])
+        if (String(desks[i].id) !== String(id)) kept.push(desks[i])
       }
       next.desks = kept
-      if (next.currentId !== undefined && String(next.currentId) === String(desk.id))
+      if (next.currentId !== undefined && String(next.currentId) === String(id))
         next.currentId = null
     }
     root.mode = "picker"
     root.forgetDesk = null
+    root.pendingForgetId = ""
+    root.busy = false
+    root.batchPhase = ""
+    root.pendingRestore = ""
     root.assignState(next)
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
@@ -618,7 +703,6 @@ Item {
         var desks = next.desks || []
         for (var i = 0; i < desks.length; i++) {
           if (String(desks[i].id) === String(id)) {
-            desks[i].recipe = recipe
             desks[i].lastUsed = Date.now()
           }
         }
@@ -637,10 +721,39 @@ Item {
       root.startFresh()
       return
     }
+    if (card.kind === "unsaved") {
+      root.switchToUnsaved()
+      return
+    }
     root.switchTo(root.deskById(card.id) || card.desk)
   }
 
   function startFresh() {
+    if (root.busy) return
+    root.busy = true
+    root.targetDesk = null
+    root.pendingDesk = null
+    root.switchToId = ""
+    root.leavingForFresh = true
+    root.restoringUnsaved = false
+    root.refreshStage(function(ok) {
+      if (!ok) {
+        root.busy = false
+        root.leavingForFresh = false
+        return
+      }
+      var windows = (root.stage && root.stage.windows) ? root.stage.windows : []
+      if (root.currentSlug() === "unnamed" && (!windows || !windows.length)) {
+        root.busy = false
+        root.leavingForFresh = false
+        root.dismiss()
+        return
+      }
+      root.runFresh()
+    })
+  }
+
+  function switchToUnsaved() {
     if (root.busy) return
     if (!root.desksState || !root.desksState.currentId) {
       root.dismiss()
@@ -648,15 +761,17 @@ Item {
     }
     root.busy = true
     root.targetDesk = null
+    root.pendingDesk = null
     root.switchToId = ""
-    root.leavingForFresh = true
+    root.leavingForFresh = false
+    root.restoringUnsaved = true
     root.refreshStage(function(ok) {
       if (!ok) {
         root.busy = false
-        root.leavingForFresh = false
+        root.restoringUnsaved = false
         return
       }
-      root.runFresh()
+      root.runParkRestore(root.currentSlug(), "unnamed", null)
     })
   }
 
@@ -672,7 +787,9 @@ Item {
     }
     root.pendingFocusWs = "1"
     root.pendingDnd = ""
+    root.pendingTheme = ""
     root.pendingLaunches = []
+    root.pendingDesk = null
     root.pendingPark = root.batchString(plan.park || plan)
     root.pendingRestore = ""
     root.startBatch(root.pendingPark, "park")
@@ -778,16 +895,19 @@ Item {
 
     root.pendingFocusWs = String(root.lastWorkspaceOf(desk, plan))
     root.pendingDnd = ""
+    root.pendingTheme = ""
     root.pendingLaunches = []
+    root.pendingDesk = desk || null
     if (desk) {
       var extras = root.extrasOf(desk)
       if (extras.dnd === "on" || extras.dnd === "off") root.pendingDnd = extras.dnd
-      if (extras.launchMissing && typeof Model.launchMissingPlan === "function") {
+      if (typeof Model.themeAction === "function") {
         try {
-          var launches = Model.launchMissingPlan(desk, root.stage)
-          if (launches && Array.isArray(launches.launches)) launches = launches.launches
-          root.pendingLaunches = Array.isArray(launches) ? launches : []
-        } catch (e) { root.pendingLaunches = [] }
+          var theme = Model.themeAction(extras)
+          if (theme) root.pendingTheme = String(theme)
+        } catch (e) { root.pendingTheme = extras.theme && extras.theme !== "leave" ? String(extras.theme) : "" }
+      } else if (extras.theme && extras.theme !== "leave") {
+        root.pendingTheme = String(extras.theme)
       }
     }
 
@@ -808,6 +928,7 @@ Item {
     if (batchProc.running) {
       root.busy = false
       root.leavingForFresh = false
+      root.restoringUnsaved = false
       return
     }
     batchProc.command = ["hyprctl", "--batch", batch]
@@ -819,6 +940,8 @@ Item {
       root.busy = false
       root.batchPhase = ""
       root.leavingForFresh = false
+      root.restoringUnsaved = false
+      root.pendingForgetId = ""
       return
     }
     if (phase === "park") {
@@ -826,9 +949,34 @@ Item {
       return
     }
     if (phase === "restore") {
-      Qt.callLater(function() { root.runFocus() })
+      Qt.callLater(function() { root.afterRestore() })
       return
     }
+    if (phase === "forget-restore") {
+      Qt.callLater(function() { root.finishForget() })
+      return
+    }
+  }
+
+  function afterRestore() {
+    var desk = root.pendingDesk
+    var extras = desk ? root.extrasOf(desk) : null
+    if (desk && extras && extras.launchMissing) {
+      root.refreshStage(function(ok) {
+        root.pendingLaunches = []
+        if (ok && typeof Model.launchMissingPlan === "function") {
+          try {
+            var launches = Model.launchMissingPlan(desk, root.stage)
+            if (launches && Array.isArray(launches.launches)) launches = launches.launches
+            root.pendingLaunches = Array.isArray(launches) ? launches : []
+          } catch (e) { root.pendingLaunches = [] }
+        }
+        root.runFocus()
+      })
+      return
+    }
+    root.pendingLaunches = []
+    root.runFocus()
   }
 
   function focusDispatch(ws) {
@@ -884,10 +1032,18 @@ Item {
     dndProc.running = true
   }
 
+  function applyTheme() {
+    if (!root.pendingTheme) return
+    if (themeSetProc.running) return
+    themeSetProc.command = ["omarchy", "theme", "set", root.pendingTheme]
+    themeSetProc.running = true
+  }
+
   function finishSwitch() {
     root.launchMissing()
     root.applyDnd()
-    if (root.leavingForFresh) {
+    root.applyTheme()
+    if (root.leavingForFresh || root.restoringUnsaved) {
       var fresh = null
       if (typeof Model.leaveDesk === "function") {
         try { fresh = Model.leaveDesk(root.desksState) } catch (e) { fresh = null }
@@ -915,8 +1071,11 @@ Item {
     root.pendingRestore = ""
     root.pendingLaunches = []
     root.pendingDnd = ""
+    root.pendingTheme = ""
+    root.pendingDesk = null
     root.switchToId = ""
     root.leavingForFresh = false
+    root.restoringUnsaved = false
     root.dismiss()
   }
 
@@ -963,6 +1122,7 @@ Item {
       }
     }
     root.stage = stage
+    root.rebuildCards()
     var cb = root.stageCallback
     root.stageCallback = null
     if (root.stageQueued) {
@@ -1045,6 +1205,13 @@ Item {
   }
 
   function handleExtrasKey(event) {
+    if (root.extrasPickingTheme) {
+      if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+        event.accepted = true
+        return
+      }
+      return
+    }
     if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
       root.confirmExtras()
       event.accepted = true
@@ -1139,6 +1306,33 @@ Item {
 
   Process {
     id: dndProc
+  }
+
+  Process {
+    id: themeSetProc
+  }
+
+  Process {
+    id: themeListProc
+    stdout: StdioCollector {
+      id: themeListOut
+      waitForEnd: true
+    }
+    onExited: function(code) {
+      var names = []
+      if (code === 0 && typeof Model.parseThemeList === "function") {
+        try { names = Model.parseThemeList(themeListOut.text || "") } catch (e) { names = [] }
+      }
+      if (!Array.isArray(names) || !names.length) {
+        var raw = String(themeListOut.text || "").split(/\n/)
+        names = []
+        for (var i = 0; i < raw.length; i++) {
+          var line = String(raw[i] || "").replace(/^\s+|\s+$/g, "")
+          if (line) names.push(line)
+        }
+      }
+      root.themeNames = names
+    }
   }
 
   component ChromeButton: Rectangle {
@@ -1341,9 +1535,10 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             text: root.mode === "save" ? "Save this room"
               : (root.mode === "rename" ? "Rename"
+              : (root.mode === "extras" && root.extrasPickingTheme ? "Theme"
               : (root.mode === "extras" && root.extrasDesk ? String(root.extrasDesk.name || "")
               : (root.mode === "forget" && root.forgetDesk ? "Forget " + String(root.forgetDesk.name || "") + "?"
-              : "Desks")))
+              : "Desks"))))
             color: root.foreground
             font.family: root.fontFamily
             font.pixelSize: Style.font.heading
@@ -1354,7 +1549,7 @@ Item {
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
             visible: (root.mode === "picker" && !root.pickerEmpty) || root.mode === "extras"
-            text: root.mode === "extras" ? "desk extras" : (root.filterText || "type to filter")
+            text: root.mode === "extras" ? (root.extrasPickingTheme ? "pick a theme" : "desk extras") : (root.filterText || "type to filter")
             color: root.muted
             font.family: root.fontFamily
             font.pixelSize: root.mode === "extras" ? Style.font.caption : (root.filterText ? Style.font.heading : Style.font.bodySmall)
@@ -1431,6 +1626,7 @@ Item {
 
               readonly property var card: modelData || ({})
               readonly property bool isNew: card.kind === "new"
+              readonly property bool isUnsaved: card.kind === "unsaved"
               readonly property bool hasCursor: index === root.cursorIndex
               readonly property bool isHere: !!card.here
 
@@ -1466,12 +1662,12 @@ Item {
 
                   Rectangle {
                     id: pill
-                    visible: !!(card.here || card.dnd)
+                    visible: !!(card.here || card.dnd || isUnsaved)
                     anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
                     color: "transparent"
                     border.width: 1
-                    border.color: card.here ? Util.alpha(root.accent, 0.55) : Util.alpha(root.urgent, 0.5)
+                    border.color: card.here ? Util.alpha(root.accent, 0.55) : (isUnsaved ? root.borderSoft : Util.alpha(root.urgent, 0.5))
                     implicitWidth: pillText.implicitWidth + Style.space(12)
                     implicitHeight: pillText.implicitHeight + Style.space(2)
                     width: visible ? implicitWidth : 0
@@ -1479,8 +1675,8 @@ Item {
                     Text {
                       id: pillText
                       anchors.centerIn: parent
-                      text: card.here ? "here" : "dnd"
-                      color: card.here ? root.accent : root.urgent
+                      text: card.here ? "here" : (isUnsaved ? "draft" : "dnd")
+                      color: card.here ? root.accent : (isUnsaved ? root.muted : root.urgent)
                       font.family: root.fontFamily
                       font.pixelSize: Style.font.caption
                     }
@@ -1645,7 +1841,7 @@ Item {
 
         Column {
           width: parent.width
-          visible: root.mode === "extras"
+          visible: root.mode === "extras" && !root.extrasPickingTheme
           spacing: Style.space(14)
 
           Item {
@@ -1671,17 +1867,17 @@ Item {
               ChoiceChip {
                 label: "leave"
                 on: root.extrasDraft.dnd === "leave"
-                onClicked: root.extrasDraft = ({ dnd: "leave", theme: "leave", launchMissing: root.extrasDraft.launchMissing })
+                onClicked: root.patchExtras({ dnd: "leave" })
               }
               ChoiceChip {
                 label: "on"
                 on: root.extrasDraft.dnd === "on"
-                onClicked: root.extrasDraft = ({ dnd: "on", theme: "leave", launchMissing: root.extrasDraft.launchMissing })
+                onClicked: root.patchExtras({ dnd: "on" })
               }
               ChoiceChip {
                 label: "off"
                 on: root.extrasDraft.dnd === "off"
-                onClicked: root.extrasDraft = ({ dnd: "off", theme: "leave", launchMissing: root.extrasDraft.launchMissing })
+                onClicked: root.patchExtras({ dnd: "off" })
               }
             }
           }
@@ -1708,13 +1904,13 @@ Item {
 
               ChoiceChip {
                 label: "leave"
-                on: true
+                on: !root.extrasDraft.theme || root.extrasDraft.theme === "leave"
+                onClicked: root.patchExtras({ theme: "leave" })
               }
-              // Theme-on-switch is out of v1 (leave only).
               ChoiceChip {
-                label: "set…"
-                on: false
-                enabledChip: false
+                label: root.themeChipLabel()
+                on: !!(root.extrasDraft.theme && root.extrasDraft.theme !== "leave")
+                onClicked: root.beginThemePick()
               }
             }
           }
@@ -1742,12 +1938,12 @@ Item {
               ChoiceChip {
                 label: "yes"
                 on: root.extrasDraft.launchMissing === true
-                onClicked: root.extrasDraft = ({ dnd: root.extrasDraft.dnd, theme: "leave", launchMissing: true })
+                onClicked: root.patchExtras({ launchMissing: true })
               }
               ChoiceChip {
                 label: "no"
                 on: root.extrasDraft.launchMissing === false
-                onClicked: root.extrasDraft = ({ dnd: root.extrasDraft.dnd, theme: "leave", launchMissing: false })
+                onClicked: root.patchExtras({ launchMissing: false })
               }
             }
           }
@@ -1770,13 +1966,64 @@ Item {
 
         Column {
           width: parent.width
+          visible: root.mode === "extras" && root.extrasPickingTheme
+          spacing: Style.space(10)
+
+          Text {
+            width: parent.width
+            text: "A switch will run omarchy theme set. Leave keeps whatever is on the desktop."
+            color: root.muted
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+            wrapMode: Text.WordWrap
+          }
+
+          Flickable {
+            width: parent.width
+            height: Math.min(themeFlow.implicitHeight, Style.space(280))
+            contentWidth: width
+            contentHeight: themeFlow.implicitHeight
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+
+            Flow {
+              id: themeFlow
+              width: parent.width
+              spacing: Style.space(6)
+
+              ChoiceChip {
+                label: "leave"
+                on: !root.extrasDraft.theme || root.extrasDraft.theme === "leave"
+                onClicked: root.pickTheme("leave")
+              }
+
+              Repeater {
+                model: root.themeNames
+                delegate: ChoiceChip {
+                  required property string modelData
+                  label: modelData
+                  on: root.extrasDraft.theme === modelData
+                  onClicked: root.pickTheme(modelData)
+                }
+              }
+            }
+          }
+
+          ChromeButton {
+            label: "Back"
+            onClicked: root.extrasPickingTheme = false
+          }
+        }
+
+        Column {
+          width: parent.width
           visible: root.mode === "forget"
           spacing: Style.space(18)
           topPadding: Style.space(4)
 
           Text {
             width: parent.width
-            text: "The recipe is deleted. Windows that are still open stay where they are, including anything parked for " + String((root.forgetDesk && root.forgetDesk.name) || "this desk") + "."
+            text: "The recipe is deleted. Parked windows for " + String((root.forgetDesk && root.forgetDesk.name) || "this desk") + " come back onto 1–10."
             color: root.foreground
             font.family: root.fontFamily
             font.pixelSize: Style.font.title
