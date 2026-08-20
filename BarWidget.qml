@@ -14,8 +14,10 @@ BarWidget {
 
   property var currentId: null
   property string currentName: ""
+  property int savedDeskCount: 0
   readonly property bool hasDesk: currentName !== ""
-  readonly property string chipText: hasDesk ? "/ " + currentName : "Desks"
+  readonly property bool draft: !hasDesk && savedDeskCount > 0
+  readonly property string chipText: hasDesk ? "/ " + currentName : (draft ? "Unsaved" : "Desks")
 
   function deskNameFor(state, id) {
     if (id === null || id === undefined || !state || !state.desks)
@@ -45,6 +47,7 @@ BarWidget {
       id = state.currentId
     root.currentId = id
     root.currentName = root.deskNameFor(state, id)
+    root.savedDeskCount = (state && state.desks && state.desks.length) ? state.desks.length : 0
   }
 
   function toggleOverlay() {
@@ -61,8 +64,6 @@ BarWidget {
   implicitHeight: barSize
   visible: true
 
-  Component.onCompleted: console.log("omadesk chip", chipText, implicitWidth, visible)
-
   FileView {
     id: desksFile
     path: root.desksPath
@@ -78,7 +79,7 @@ BarWidget {
     anchors.centerIn: parent
     bar: root.bar
     text: root.chipText
-    tooltipText: hasDesk ? currentName : "Desks"
+    tooltipText: hasDesk ? currentName : (draft ? "Unsaved" : "Desks")
     foreground: hasDesk ? Color.accent : root.barFg
     useActiveColor: false
     dimmed: false

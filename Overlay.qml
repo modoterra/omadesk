@@ -37,6 +37,7 @@ Item {
   property var pendingFocusWs: ""
   property var pendingDnd: ""
   property string switchToId: ""
+  property bool leavingForFresh: false
 
   property color background: Color.menu.background
   property color foreground: Color.menu.text
@@ -286,7 +287,7 @@ Item {
   }
 
   function newDeskCard() {
-    return { kind: "new", name: "+ new desk", meta: "n saves what is on screen", tiles: [] }
+    return { kind: "new", name: "+ new desk", meta: "enter starts empty", tiles: [] }
   }
 
   function rebuildCards() {
@@ -624,10 +625,48 @@ Item {
     }
     var card = root.highlightedCard()
     if (!card || card.kind === "new") {
-      root.openSave()
+      root.startFresh()
       return
     }
     root.switchTo(root.deskById(card.id) || card.desk)
+  }
+
+  function startFresh() {
+    if (root.busy) return
+    if (!root.desksState || !root.desksState.currentId) {
+      root.dismiss()
+      return
+    }
+    root.busy = true
+    root.targetDesk = null
+    root.switchToId = ""
+    root.leavingForFresh = true
+    root.refreshStage(function(ok) {
+      if (!ok) {
+        root.busy = false
+        root.leavingForFresh = false
+        return
+      }
+      root.runFresh()
+    })
+  }
+
+  function runFresh() {
+    var plan = null
+    if (typeof Model.freshPlan === "function") {
+      try { plan = Model.freshPlan(root.stage, root.currentSlug()) } catch (e) { plan = null }
+    }
+    if (!plan) {
+      root.busy = false
+      root.leavingForFresh = false
+      return
+    }
+    root.pendingFocusWs = "1"
+    root.pendingDnd = ""
+    root.pendingLaunches = []
+    root.pendingPark = root.batchString(plan.park || plan)
+    root.pendingRestore = ""
+    root.startBatch(root.pendingPark, "park")
   }
 
   function currentSlug() {
@@ -759,6 +798,7 @@ Item {
     }
     if (batchProc.running) {
       root.busy = false
+      root.leavingForFresh = false
       return
     }
     batchProc.command = ["hyprctl", "--batch", batch]
@@ -769,6 +809,7 @@ Item {
     if (code !== 0) {
       root.busy = false
       root.batchPhase = ""
+      root.leavingForFresh = false
       return
     }
     if (phase === "park") {
@@ -837,7 +878,18 @@ Item {
   function finishSwitch() {
     root.launchMissing()
     root.applyDnd()
-    if (root.switchToId) {
+    if (root.leavingForFresh) {
+      var fresh = null
+      if (typeof Model.leaveDesk === "function") {
+        try { fresh = Model.leaveDesk(root.desksState) } catch (e) { fresh = null }
+      }
+      if (!fresh) {
+        fresh = Util.cloneJson(root.desksState || root.emptyState())
+        fresh.currentId = null
+      }
+      root.desksState = fresh
+      root.persistDesks()
+    } else if (root.switchToId) {
       var next = Util.cloneJson(root.desksState || root.emptyState())
       next.currentId = root.switchToId
       var desks = next.desks || []
@@ -855,6 +907,7 @@ Item {
     root.pendingLaunches = []
     root.pendingDnd = ""
     root.switchToId = ""
+    root.leavingForFresh = false
     root.dismiss()
   }
 
@@ -1442,7 +1495,7 @@ Item {
                 }
 
                 Text {
-                  text: String(card.meta || "n saves what is on screen")
+                  text: String(card.meta || "enter starts empty")
                   color: root.muted
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.bodySmall

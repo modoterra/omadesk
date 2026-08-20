@@ -263,6 +263,25 @@ test("11 switchPlan sequential park then restore", function() {
   })
 })
 
+test("11b freshPlan parks current and restores nothing", function() {
+  const stage = model.parseStage(clientsText, workspacesText)
+  const plan = model.freshPlan(stage, "writing")
+  assert.strictEqual(plan.fresh, true)
+  assert.strictEqual(plan.sequential, true)
+  assert.ok(plan.park.dispatches.length >= 3)
+  plan.park.dispatches.forEach((lua) => {
+    assert.ok(lua.indexOf("name:omadesk-writing-") >= 0)
+  })
+  same(plan.restore.dispatches, [])
+  assert.strictEqual(plan.restore.batch, "")
+  assert.strictEqual(plan.lastWorkspace, 1)
+  const empty = model.freshPlan({ workspaces: [], windows: [], lastWorkspace: null }, "writing")
+  same(empty.park.dispatches, [])
+  const left = model.leaveDesk(model.demoDesks())
+  assert.strictEqual(left.currentId, null)
+  assert.strictEqual(left.desks.length, 3)
+})
+
 test("12 match order address then class+workspace", function() {
   const live = [
     { address: "0xBBB", class: "Ghostty", initialClass: "Ghostty", workspace: { id: 1, name: "1" } },
@@ -417,5 +436,5 @@ function isArray(value) {
   return Array.isArray(value)
 }
 
-assert.strictEqual(tests, 21)
+assert.strictEqual(tests, 22)
 console.log("ok")

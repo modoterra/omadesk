@@ -54,8 +54,8 @@ o.bind("SUPER + D", "Desks", "omarchy-shell shell toggle modoterra.omadesk")
 | type | filter |
 | j / k, arrows, h l | move cursor |
 | 1–9 | jump to card |
-| enter | switch |
-| n | save current as new |
+| enter | switch, or start an empty unsaved desk on **+ new desk** |
+| n | save current as a named desk |
 | s | update desk you are on |
 | r | rename (display name; parking id stays) |
 | e | extras (DND leave/on/off, launch missing, theme leave) |

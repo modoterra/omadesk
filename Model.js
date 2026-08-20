@@ -374,6 +374,22 @@ function switchPlan(stage, clientsJson, fromSlug, toSlug) {
   }
 }
 
+function freshPlan(stage, fromSlug) {
+  return {
+    park: parkPlan(stage, fromSlug == null || fromSlug === "" ? "unnamed" : fromSlug),
+    restore: { slug: "", dispatches: [], batch: "" },
+    sequential: true,
+    lastWorkspace: 1,
+    fresh: true
+  }
+}
+
+function leaveDesk(state) {
+  var next = normalizeState(state)
+  next.currentId = null
+  return next
+}
+
 function currentSlug(state) {
   if (!state || state.currentId == null || state.currentId === "") return "unnamed"
   return String(state.currentId)
@@ -535,7 +551,7 @@ function pickerCards(state, query) {
       desk: desk
     })
   }
-  if (q === "") cards.push({ kind: "new", name: "+ new desk", meta: "n saves what is on screen", tiles: [] })
+  if (q === "") cards.push({ kind: "new", name: "+ new desk", meta: "enter starts empty", tiles: [] })
   return cards
 }
 
