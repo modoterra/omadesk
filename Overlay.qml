@@ -313,17 +313,25 @@ Item {
     return out
   }
 
-  function deskMeta(desk) {
-    if (desk && desk.meta) return String(desk.meta)
+  function deskMeta(desk, here) {
+    if (typeof Model.formatDeskMeta === "function") {
+      try {
+        var space = typeof Model.deskSpaceMeta === "function" ? Model.deskSpaceMeta(desk) : ""
+        return space + Model.formatDeskMeta(desk, Date.now(), !!here)
+      } catch (e) {}
+    }
     var tiles = root.tilesFrom(desk, 10)
     var used = 0
     for (var i = 0; i < tiles.length; i++) {
       if (!tiles[i].vacant) used += 1
     }
     var when = "now"
-    if (desk && desk.lastUsedLabel) when = String(desk.lastUsedLabel)
-    else if (desk && desk.lastUsed) {
-      var then = Number(desk.lastUsed)
+    if (here) when = "now"
+    else if (desk && desk.lastUsedLabel) when = String(desk.lastUsedLabel)
+    else {
+      var then = NaN
+      if (desk && desk.lastUsed != null && desk.lastUsed !== "") then = Number(desk.lastUsed)
+      if (!isFinite(then) && desk && desk.updatedAt) then = Date.parse(desk.updatedAt)
       var delta = Date.now() - then
       if (!isFinite(then) || !isFinite(delta) || delta < 60000) when = "now"
       else if (delta < 3600000) when = Math.round(delta / 60000) + " min ago"
@@ -343,7 +351,7 @@ Item {
       here: root.desksState && String(root.desksState.currentId) === String(desk.id),
       dnd: extras.dnd === "on",
       tiles: root.tilesFrom(desk, 3),
-      meta: root.deskMeta(desk),
+      meta: root.deskMeta(desk, root.desksState && String(root.desksState.currentId) === String(desk.id)),
       desk: desk
     }
   }
@@ -383,12 +391,11 @@ Item {
     if (!hasNew && !root.filterText) cards.push(root.newDeskCard())
     for (var t = 0; t < cards.length; t++) {
       if (!cards[t] || cards[t].kind === "new" || cards[t].kind === "unsaved") continue
-      if (cards[t].tiles && cards[t].tiles.length) continue
       var src = root.deskById(cards[t].id) || cards[t].desk || cards[t]
-      cards[t].tiles = root.tilesFrom(src, 3)
-      if (!cards[t].meta) cards[t].meta = root.deskMeta(src)
-      if (cards[t].here === undefined)
-        cards[t].here = !!(root.desksState && String(root.desksState.currentId) === String(cards[t].id))
+      cards[t].here = !!(root.desksState && String(root.desksState.currentId) === String(cards[t].id))
+      cards[t].meta = root.deskMeta(src, cards[t].here)
+      if (!(cards[t].tiles && cards[t].tiles.length))
+        cards[t].tiles = root.tilesFrom(src, 3)
       if (cards[t].dnd === undefined)
         cards[t].dnd = root.extrasOf(src).dnd === "on"
     }
