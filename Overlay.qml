@@ -24,6 +24,8 @@ Item {
   property var extrasDraft: ({ dnd: "leave", theme: "leave", launchMissing: true })
   property var forgetDesk: null
   property int forgetIndex: 0
+  property var closeDesk: null
+  property int closeIndex: 0
   property bool busy: false
   property bool desksDirReady: false
   property bool debugDemo: false
@@ -63,9 +65,11 @@ Item {
   property string fontFamily: Style.font.menuFamily
   property int contentMargin: Style.space(16)
   property int headerHeight: Math.max(Style.space(34), Style.font.heading + Style.spacing.controlPaddingY)
-  property int cardWidth: Math.min(Style.space(560), panel.width - Style.gapsOut * 2)
+  property int cardWidth: Math.min(Style.space(680), panel.width - Style.gapsOut * 2)
   property int gridGap: Style.space(8)
   property int cellWidth: Math.max(1, Math.floor((cardWidth - card.contentLeftInset - card.contentRightInset - gridGap) / 2))
+  property int tileColumns: 3
+  property int tileHeight: Style.space(68)
   readonly property string desksDir: (Quickshell.env("HOME") || "") + "/.config/omarchy/omadesk"
   readonly property string desksPath: desksDir + "/desks.json"
   readonly property bool dialogOpen: root.mode !== "picker"
@@ -137,6 +141,7 @@ Item {
     root.targetDesk = null
     root.extrasDesk = null
     root.forgetDesk = null
+    root.closeDesk = null
     root.extrasPickingTheme = false
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
@@ -295,7 +300,7 @@ Item {
       spaces = source.recipe.workspaces
     if (!Array.isArray(spaces)) spaces = []
 
-    var max = limit || Math.min(3, Math.max(spaces.length, 3))
+    var max = limit || Math.min(10, Math.max(spaces.length, 5))
     var out = []
     for (var i = 0; i < max; i++) {
       var ws = spaces[i] || null
@@ -344,14 +349,25 @@ Item {
 
   function deskToCard(desk) {
     var extras = root.extrasOf(desk)
+    var here = !!(root.desksState && String(root.desksState.currentId) === String(desk.id))
+    var currentId = root.desksState ? root.desksState.currentId : null
+    var life = "dead"
+    if (typeof Model.deskLife === "function") {
+      try { life = Model.deskLife(desk, root.stage, currentId) } catch (e) { life = "dead" }
+    }
+    var tiles = root.tilesFrom(desk, 10)
+    if (typeof Model.deskPreviewSource === "function" && typeof Model.deskTiles === "function") {
+      try { tiles = Model.deskTiles(Model.deskPreviewSource(desk, root.stage, currentId)) } catch (e) {}
+    }
     return {
       kind: "desk",
       id: desk.id,
       name: desk.name || "",
-      here: root.desksState && String(root.desksState.currentId) === String(desk.id),
+      here: here,
+      life: life,
       dnd: extras.dnd === "on",
-      tiles: root.tilesFrom(desk, 3),
-      meta: root.deskMeta(desk, root.desksState && String(root.desksState.currentId) === String(desk.id)),
+      tiles: tiles,
+      meta: root.deskMeta(desk, here),
       desk: desk
     }
   }
@@ -392,10 +408,17 @@ Item {
     for (var t = 0; t < cards.length; t++) {
       if (!cards[t] || cards[t].kind === "new" || cards[t].kind === "unsaved") continue
       var src = root.deskById(cards[t].id) || cards[t].desk || cards[t]
-      cards[t].here = !!(root.desksState && String(root.desksState.currentId) === String(cards[t].id))
+      var currentId = root.desksState ? root.desksState.currentId : null
+      cards[t].here = !!(currentId && String(currentId) === String(cards[t].id))
       cards[t].meta = root.deskMeta(src, cards[t].here)
-      if (!(cards[t].tiles && cards[t].tiles.length))
-        cards[t].tiles = root.tilesFrom(src, 3)
+      if (typeof Model.deskLife === "function") {
+        try { cards[t].life = Model.deskLife(src, root.stage, currentId) } catch (e) {}
+      }
+      if (typeof Model.deskPreviewSource === "function" && typeof Model.deskTiles === "function") {
+        try { cards[t].tiles = Model.deskTiles(Model.deskPreviewSource(src, root.stage, currentId)) } catch (e) {}
+      } else if (!(cards[t].tiles && cards[t].tiles.length)) {
+        cards[t].tiles = root.tilesFrom(src, 10)
+      }
       if (cards[t].dnd === undefined)
         cards[t].dnd = root.extrasOf(src).dnd === "on"
     }
@@ -558,6 +581,85 @@ Item {
     root.forgetDesk = desk
     root.forgetIndex = 0
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function openClose() {
+    if (root.busy) return
+    var card = root.highlightedCard()
+    if (!card || card.kind === "new") return
+    if (card.kind === "unsaved") {
+      root.closeDesk = { id: "unnamed", name: "Unsaved" }
+    } else {
+      var desk = root.highlightedDesk()
+      if (!desk) return
+      root.closeDesk = desk
+    }
+    if (card.kind !== "unsaved" && card.life === "dead") {
+      root.closeDesk = null
+      return
+    }
+    root.mode = "close"
+    root.closeIndex = 0
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function confirmClose() {
+    var desk = root.closeDesk
+    if (!desk) { root.cancelDialog(); return }
+    if (root.busy) return
+    root.busy = true
+    root.refreshStage(function(ok) {
+      if (!ok) {
+        root.busy = false
+        return
+      }
+      var plan = null
+      if (typeof Model.closePlan === "function") {
+        try {
+          plan = Model.closePlan(desk, root.stage, root.desksState ? root.desksState.currentId : null)
+        } catch (e) { plan = null }
+      }
+      var batch = root.batchString(plan)
+      root.mode = "picker"
+      root.closeDesk = null
+      if (!batch) {
+        root.busy = false
+        Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+        return
+      }
+      root.pendingRestore = ""
+      root.startBatch(batch, "close")
+    })
+  }
+
+  function wakeHighlighted() {
+    if (root.busy) return
+    var card = root.highlightedCard()
+    if (!card || card.kind === "new" || card.kind === "unsaved") return
+    var desk = root.highlightedDesk()
+    if (!desk) return
+    root.busy = true
+    root.refreshStage(function(ok) {
+      if (!ok) {
+        root.busy = false
+        return
+      }
+      var launches = []
+      if (typeof Model.wakePlan === "function") {
+        try {
+          launches = Model.wakePlan(desk, root.stage, root.desksState ? root.desksState.currentId : null)
+          if (launches && Array.isArray(launches.launches)) launches = launches.launches
+        } catch (e) { launches = [] }
+      }
+      if (!Array.isArray(launches)) launches = []
+      for (var i = 0; i < launches.length; i++) root.launchOne(launches[i])
+      root.busy = false
+      Qt.callLater(function() {
+        root.refreshStage(function() {
+          Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+        })
+      })
+    })
   }
 
   function confirmSave() {
@@ -963,6 +1065,16 @@ Item {
       Qt.callLater(function() { root.finishForget() })
       return
     }
+    if (phase === "close") {
+      root.busy = false
+      root.batchPhase = ""
+      Qt.callLater(function() {
+        root.refreshStage(function() {
+          Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+        })
+      })
+      return
+    }
   }
 
   function afterRestore() {
@@ -1198,6 +1310,12 @@ Item {
     } else if (!root.filterText && event.text === "e") {
       root.openExtras()
       event.accepted = true
+    } else if (!root.filterText && event.text === "x") {
+      root.openClose()
+      event.accepted = true
+    } else if (!root.filterText && event.text === "o") {
+      root.wakeHighlighted()
+      event.accepted = true
     } else if (event.text && event.text.length === 1 && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127) {
       if (root.pickerEmpty) return
       if (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) return
@@ -1212,6 +1330,17 @@ Item {
       event.accepted = true
     } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
       if (root.forgetIndex === 1) root.confirmForget()
+      else root.cancelDialog()
+      event.accepted = true
+    }
+  }
+
+  function handleCloseKey(event) {
+    if (event.key === Qt.Key_Left || event.key === Qt.Key_Right || event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab || event.text === "h" || event.text === "l") {
+      root.closeIndex = root.closeIndex === 0 ? 1 : 0
+      event.accepted = true
+    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+      if (root.closeIndex === 1) root.confirmClose()
       else root.cancelDialog()
       event.accepted = true
     }
@@ -1424,8 +1553,8 @@ Item {
     color: tile.vacant ? "transparent" : root.tileFill
     border.width: 1
     border.color: tile.vacant ? root.borderSoft : Util.alpha(root.foreground, 0.12)
-    implicitHeight: Style.space(54)
-    implicitWidth: Style.space(80)
+    implicitHeight: root.tileHeight
+    implicitWidth: Style.space(96)
     clip: true
 
     Column {
@@ -1515,6 +1644,10 @@ Item {
             root.handleForgetKey(event)
             return
           }
+          if (root.mode === "close") {
+            root.handleCloseKey(event)
+            return
+          }
           if (root.mode === "extras") {
             root.handleExtrasKey(event)
             return
@@ -1553,7 +1686,8 @@ Item {
               : (root.mode === "extras" && root.extrasPickingTheme ? "Theme"
               : (root.mode === "extras" && root.extrasDesk ? String(root.extrasDesk.name || "")
               : (root.mode === "forget" && root.forgetDesk ? "Forget " + String(root.forgetDesk.name || "") + "?"
-              : "Desks"))))
+              : (root.mode === "close" && root.closeDesk ? "Close " + String(root.closeDesk.name || "") + "?"
+              : "Desks")))))
             color: root.foreground
             font.family: root.fontFamily
             font.pixelSize: Style.font.heading
@@ -1646,25 +1780,29 @@ Item {
               readonly property bool isHere: !!card.here
 
               width: root.cellWidth
-              implicitHeight: Style.space(148)
+              implicitHeight: (isNew ? newBody.implicitHeight : deskBody.implicitHeight) + Style.space(24)
               color: isNew ? (hasCursor ? root.fillHover : "transparent") : (isHere ? root.fillSelected : (hasCursor ? root.fillHover : root.fill))
               border.width: 1
               border.color: hasCursor ? Util.alpha(root.foreground, 0.55) : root.borderSoft
 
               Column {
+                id: deskBody
                 visible: !isNew
-                anchors.fill: parent
+                width: parent.width - Style.space(24)
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
                 anchors.margins: Style.space(12)
                 spacing: Style.space(10)
 
                 Item {
                   width: parent.width
-                  height: nameLabel.implicitHeight
+                  height: Math.max(nameLabel.implicitHeight, pillRow.implicitHeight)
 
                   Text {
                     id: nameLabel
                     anchors.left: parent.left
-                    anchors.right: pill.left
+                    anchors.right: pillRow.left
                     anchors.rightMargin: Style.space(8)
                     anchors.verticalCenter: parent.verticalCenter
                     text: String(card.name || "")
@@ -1675,37 +1813,89 @@ Item {
                     elide: Text.ElideRight
                   }
 
-                  Rectangle {
-                    id: pill
-                    visible: !!(card.here || card.dnd || isUnsaved)
+                  Row {
+                    id: pillRow
                     anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
-                    color: "transparent"
-                    border.width: 1
-                    border.color: card.here ? Util.alpha(root.accent, 0.55) : (isUnsaved ? root.borderSoft : Util.alpha(root.urgent, 0.5))
-                    implicitWidth: pillText.implicitWidth + Style.space(12)
-                    implicitHeight: pillText.implicitHeight + Style.space(2)
-                    width: visible ? implicitWidth : 0
+                    spacing: Style.space(4)
 
-                    Text {
-                      id: pillText
-                      anchors.centerIn: parent
-                      text: card.here ? "here" : (isUnsaved ? "draft" : "dnd")
-                      color: card.here ? root.accent : (isUnsaved ? root.muted : root.urgent)
-                      font.family: root.fontFamily
-                      font.pixelSize: Style.font.caption
+                    Rectangle {
+                      visible: !!card.here
+                      color: "transparent"
+                      border.width: 1
+                      border.color: Util.alpha(root.accent, 0.55)
+                      implicitWidth: hereText.implicitWidth + Style.space(12)
+                      implicitHeight: hereText.implicitHeight + Style.space(2)
+                      Text {
+                        id: hereText
+                        anchors.centerIn: parent
+                        text: "here"
+                        color: root.accent
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
+                      }
+                    }
+                    Rectangle {
+                      visible: !isUnsaved
+                      color: "transparent"
+                      border.width: 1
+                      border.color: card.life === "live" ? Util.alpha(root.accent, 0.4) : root.borderSoft
+                      implicitWidth: lifeText.implicitWidth + Style.space(12)
+                      implicitHeight: lifeText.implicitHeight + Style.space(2)
+                      Text {
+                        id: lifeText
+                        anchors.centerIn: parent
+                        text: card.life === "live" ? "live" : "dead"
+                        color: card.life === "live" ? root.accent : root.muted
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
+                      }
+                    }
+                    Rectangle {
+                      visible: !!card.dnd
+                      color: "transparent"
+                      border.width: 1
+                      border.color: Util.alpha(root.urgent, 0.5)
+                      implicitWidth: dndText.implicitWidth + Style.space(12)
+                      implicitHeight: dndText.implicitHeight + Style.space(2)
+                      Text {
+                        id: dndText
+                        anchors.centerIn: parent
+                        text: "dnd"
+                        color: root.urgent
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
+                      }
+                    }
+                    Rectangle {
+                      visible: isUnsaved
+                      color: "transparent"
+                      border.width: 1
+                      border.color: root.borderSoft
+                      implicitWidth: draftText.implicitWidth + Style.space(12)
+                      implicitHeight: draftText.implicitHeight + Style.space(2)
+                      Text {
+                        id: draftText
+                        anchors.centerIn: parent
+                        text: "draft"
+                        color: root.muted
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
+                      }
                     }
                   }
                 }
 
-                Row {
+                Grid {
                   width: parent.width
-                  spacing: Style.space(6)
+                  columns: root.tileColumns
+                  columnSpacing: Style.space(6)
+                  rowSpacing: Style.space(6)
 
                   Repeater {
                     model: card.tiles || []
                     delegate: WorkspaceTile {
-                      width: Math.floor((parent.width - Style.space(12)) / 3)
+                      width: Math.floor((parent.width - Style.space(6) * (root.tileColumns - 1)) / root.tileColumns)
                       tileData: modelData
                     }
                   }
@@ -1722,8 +1912,12 @@ Item {
               }
 
               Column {
+                id: newBody
                 visible: isNew
-                anchors.fill: parent
+                width: parent.width - Style.space(24)
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
                 anchors.margins: Style.space(12)
                 spacing: Style.space(10)
 
@@ -2071,6 +2265,47 @@ Item {
           }
         }
 
+        Column {
+          width: parent.width
+          visible: root.mode === "close"
+          spacing: Style.space(18)
+          topPadding: Style.space(4)
+
+          Text {
+            width: parent.width
+            text: "Every window in " + String((root.closeDesk && root.closeDesk.name) || "this desk") + " will quit. The recipe stays, so you can open them again in the background."
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.title
+            wrapMode: Text.WordWrap
+          }
+
+          Text {
+            width: parent.width
+            text: "Scratchpad is not touched."
+            color: root.muted
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+          }
+
+          Row {
+            spacing: Style.space(8)
+
+            ChromeButton {
+              label: "Cancel"
+              hot: root.closeIndex === 0
+              onClicked: root.cancelDialog()
+            }
+
+            ChromeButton {
+              label: "Close windows"
+              danger: true
+              hot: root.closeIndex === 1
+              onClicked: root.confirmClose()
+            }
+          }
+        }
+
         Item {
           width: parent.width
           visible: root.mode === "picker" || root.mode === "save" || root.mode === "rename"
@@ -2104,7 +2339,11 @@ Item {
             Text { text: "s"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
             Text { text: " update here · "; color: root.muted; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
             Text { text: "n"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-            Text { text: " new"; color: root.muted; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+            Text { text: " new · "; color: root.muted; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+            Text { text: "x"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+            Text { text: " close · "; color: root.muted; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+            Text { text: "o"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+            Text { text: " open"; color: root.muted; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
           }
 
           Row {

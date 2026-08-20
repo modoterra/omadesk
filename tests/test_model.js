@@ -596,5 +596,72 @@ test("25 last used follows switch, not last save; here is now", function() {
   assert.strictEqual(left.desks.filter((d) => d.id === "call")[0].lastUsed, used + 120000)
 })
 
-assert.strictEqual(tests, 27)
+test("26 tiles default to five and grow with occupied spaces", function() {
+  const writing = model.demoDesks().desks[0]
+  const tiles = model.deskTiles(writing)
+  assert.strictEqual(tiles.length, 5)
+  assert.strictEqual(tiles[0].label, "Zed · charcana")
+  assert.strictEqual(tiles[3].vacant, true)
+  assert.strictEqual(tiles[4].vacant, true)
+  const wide = {
+    workspaces: [
+      { n: 1, windows: [{ class: "dev.zed.Zed", title: "a" }] },
+      { n: 7, windows: [{ class: "chromium", title: "b" }] }
+    ]
+  }
+  const grown = model.deskTiles(wide)
+  assert.strictEqual(grown.length, 7)
+  assert.strictEqual(grown[6].n, 7)
+  assert.strictEqual(grown[6].vacant, false)
+  const many = {
+    windows: [
+      { class: "com.mitchellh.ghostty", title: "one", workspace: 2 },
+      { class: "chromium", title: "two", workspace: 2 },
+      { class: "com.mitchellh.ghostty", title: "three", workspace: 2 }
+    ]
+  }
+  const stacked = model.deskTiles(many)
+  assert.ok(stacked[1].label.indexOf("Ghostty") >= 0)
+  assert.ok(stacked[1].label.indexOf("Chromium") >= 0)
+})
+
+test("27 live vs dead, closePlan, wakePlan parks in the background", function() {
+  const demo = model.demoDesks()
+  const stage = model.parseStage(clientsText, workspacesText)
+  assert.strictEqual(model.deskLife(demo.desks[0], stage, "writing"), "live")
+  assert.strictEqual(model.deskLife(demo.desks.filter((d) => d.id === "review")[0], stage, "writing"), "dead")
+  const cards = model.pickerCards(demo, "", stage)
+  assert.strictEqual(cards.filter((c) => c.id === "writing")[0].life, "live")
+  assert.strictEqual(cards.filter((c) => c.id === "review")[0].life, "dead")
+  const closeHere = model.closePlan(demo.desks[0], stage, "writing")
+  assert.ok(closeHere.dispatches.length >= 3)
+  closeHere.dispatches.forEach((lua) => {
+    assert.ok(lua.indexOf("hl.dsp.window.close({") === 0)
+    assert.ok(lua.indexOf("window = \"address:0x") >= 0)
+    assert.ok(lua.indexOf("scratchpad") === -1)
+  })
+  const closeCall = model.closePlan(demo.desks.filter((d) => d.id === "call")[0], stage, "writing")
+  assert.ok(closeCall.dispatches.length >= 1)
+  closeCall.dispatches.forEach((lua) => {
+    assert.ok(lua.indexOf("0x55f11fe15aaa") === -1)
+  })
+  const wakeReview = model.wakePlan(demo.desks.filter((d) => d.id === "review")[0], stage, "writing")
+  assert.ok(wakeReview.launches.length >= 1)
+  wakeReview.launches.forEach((item) => {
+    assert.ok(String(item.workspace).indexOf("special:omadesk-review-") === 0)
+  })
+  const wakeHere = model.wakePlan({
+    id: "writing",
+    extras: model.defaultExtras(),
+    workspaces: [{ n: 8, windows: [{ class: "mpv", exec: ["mpv"] }] }]
+  }, stage, "writing")
+  assert.strictEqual(wakeHere.launches[0].n, 8)
+  assert.strictEqual(wakeHere.launches[0].workspace, "8")
+  assert.strictEqual(
+    model.closeDispatch("0xABC"),
+    'hl.dsp.window.close({ window = "address:0xABC" })'
+  )
+})
+
+assert.strictEqual(tests, 29)
 console.log("ok")

@@ -181,6 +181,11 @@ function moveDispatch(workspaceSelector, address) {
   return "hl.dsp.window.move({ workspace = \"" + ws + "\", follow = false, window = \"" + addr + "\" })"
 }
 
+function closeDispatch(address) {
+  var addr = windowSelector(address)
+  return "hl.dsp.window.close({ window = \"" + addr + "\" })"
+}
+
 function focusDispatch(workspaceSelector) {
   var ws = String(workspaceSelector || "")
   return "hl.dsp.focus({ workspace = \"" + ws + "\" })"
@@ -670,13 +675,15 @@ function pickerCards(state, query, stage, nowMs) {
   for (i = 0; i < desks.length; i++) {
     var desk = desks[i]
     var here = st.currentId != null && desk.id === st.currentId
+    var life = deskLife(desk, stage, st.currentId)
     cards.push({
       kind: "desk",
       id: desk.id,
       name: desk.name,
       here: here,
+      life: life,
       dnd: !!(desk.extras && desk.extras.dnd === "on"),
-      tiles: deskTiles(desk),
+      tiles: deskTiles(deskPreviewSource(desk, stage, st.currentId)),
       meta: deskSpaceMeta(desk) + formatDeskMeta(desk, nowMs, here),
       desk: desk
     })
@@ -729,7 +736,7 @@ function unsavedCard(state, stage) {
   var here = !state || state.currentId == null || state.currentId === ""
   var parked = unnamedParkedWindows(stage)
   if (!here && !parked.length) return null
-  var tiles = here ? previewTiles(stage, 3) : previewTiles(parkedToStage(parked), 3)
+  var tiles = here ? previewTiles(stage) : previewTiles(parkedToStage(parked))
   return {
     kind: "unsaved",
     name: "Unsaved",
@@ -1078,19 +1085,46 @@ function prettyApp(win) {
   return last
 }
 
+function shortTitle(win) {
+  var title = String((win && win.title) || "").replace(/^\s+|\s+$/g, "")
+  if (!title) return ""
+  var cut = title.indexOf(" - ")
+  if (cut > 0 && cut <= 24) title = title.slice(0, cut)
+  if (title.length > 28) title = title.slice(0, 27) + "…"
+  return title
+}
+
 function tileLabel(ws) {
   if (!ws || !ws.windows || !ws.windows.length) return "empty"
-  var w = ws.windows[0]
-  var app = prettyApp(w)
-  var title = String(w.title || "").replace(/^\s+|\s+$/g, "")
-  if (!title) return app
-  return app + " · " + title
+  var names = []
+  var seen = {}
+  var i
+  for (i = 0; i < ws.windows.length; i++) {
+    var app = prettyApp(ws.windows[i])
+    if (!app || seen[app]) continue
+    seen[app] = true
+    names.push(app)
+  }
+  if (!names.length) return "app"
+  if (names.length === 1) {
+    var title = shortTitle(ws.windows[0])
+    if (title && title.toLowerCase().indexOf(names[0].toLowerCase()) !== 0)
+      return names[0] + " · " + title
+    if (title) return title
+    return names[0]
+  }
+  var extra = ws.windows.length - names.length
+  var label = names.slice(0, 3).join(" · ")
+  if (names.length > 3) label += " · +" + (names.length - 3)
+  else if (extra > 0) label += " · +" + extra
+  return label
 }
 
 function deskTiles(desk, limit) {
-  var max = Number(limit)
-  if (!isFinite(max) || max < 1) max = 3
-  if (max > 10) max = 10
+  var cap = Number(limit)
+  if (!isFinite(cap) || cap < 1) cap = 10
+  if (cap > 10) cap = 10
+  var floor = cap < 5 ? cap : 5
   var byN = {}
   var list = deskWorkspaces(desk)
   var i
@@ -1102,20 +1136,93 @@ function deskTiles(desk, limit) {
       if (n > last) last = n
     }
   }
-  if (desk && isArray(desk.windows)) {
+  if ((!list || !list.length) && desk && isArray(desk.windows)) {
     for (i = 0; i < desk.windows.length; i++) {
       var wn = Number(desk.windows[i] && desk.windows[i].workspace)
-      if (wn >= 1 && wn <= 10 && wn > last) last = wn
+      if (wn >= 1 && wn <= 10) {
+        if (!byN[wn]) byN[wn] = { n: wn, windows: [] }
+        if (!isArray(byN[wn].windows)) byN[wn].windows = []
+        byN[wn].windows.push(desk.windows[i])
+        if (wn > last) last = wn
+      }
     }
   }
-  if (last < 3) last = 3
-  if (last > max) last = max
+  if (last < floor) last = floor
+  if (last > cap) last = cap
   var tiles = []
   for (n = 1; n <= last; n++) {
     var label = tileLabel(byN[n])
     tiles.push({ id: n, n: n, label: label, vacant: label === "empty" })
   }
   return tiles
+}
+
+function parkedForSlug(stage, slug) {
+  var parked = stage && isArray(stage.parked) ? stage.parked : []
+  var clean = sanitizeSlug(slug)
+  var out = []
+  var i
+  for (i = 0; i < parked.length; i++) {
+    if (parked[i] && parked[i].slug === clean) out.push(parked[i])
+  }
+  return out
+}
+
+function isCurrentDesk(desk, currentId) {
+  return !!(desk && currentId != null && currentId !== "" && String(desk.id) === String(currentId))
+}
+
+function liveWindows(desk, stage, currentId) {
+  if (isCurrentDesk(desk, currentId)) return stageWindows(stage)
+  if ((currentId == null || currentId === "") && (!desk || sanitizeSlug(desk.id) === "unnamed")) {
+    return stageWindows(stage)
+  }
+  return parkedForSlug(stage, desk && desk.id)
+}
+
+function deskLife(desk, stage, currentId) {
+  return liveWindows(desk, stage, currentId).length ? "live" : "dead"
+}
+
+function deskPreviewSource(desk, stage, currentId) {
+  if (isCurrentDesk(desk, currentId) && stage) return stage
+  var parked = parkedForSlug(stage, desk && desk.id)
+  if (parked.length) return parkedToStage(parked)
+  return desk
+}
+
+function closePlan(desk, stage, currentId) {
+  var wins = liveWindows(desk, stage, currentId)
+  var dispatches = []
+  var i
+  for (i = 0; i < wins.length; i++) {
+    if (!wins[i] || !wins[i].address) continue
+    if (isScratchpadish(wins[i])) continue
+    dispatches.push(closeDispatch(wins[i].address))
+  }
+  return { slug: desk && desk.id ? String(desk.id) : "", dispatches: dispatches, batch: joinBatch(dispatches) }
+}
+
+function wakePlan(desk, stage, currentId) {
+  var here = isCurrentDesk(desk, currentId)
+  var source = here ? stage : { windows: [], parked: parkedForSlug(stage, desk && desk.id) }
+  var forced = {
+    id: desk && desk.id,
+    name: desk && desk.name,
+    extras: mergeExtras(defaultExtras(), { launchMissing: true }),
+    workspaces: deskWorkspaces(desk)
+  }
+  var launches = launchMissingPlan(forced, source)
+  var list = launches && launches.launches ? launches.launches : (isArray(launches) ? launches : [])
+  if (!here) {
+    var slug = sanitizeSlug(desk && desk.id)
+    var i
+    for (i = 0; i < list.length; i++) {
+      list[i].workspace = parkSelector(slug, list[i].n)
+    }
+  }
+  list.launches = list.slice()
+  return list
 }
 
 function previewTiles(source, limit) {
