@@ -390,6 +390,27 @@ test("20 extras helpers, cards, currentSlug, guessExec", function() {
   same(model.guessExec({ class: "Zed" }), ["zed"])
   same(model.guessExec({ class: "com.mitchellh.ghostty" }), ["ghostty"])
   same(model.guessExec({ class: "chromium" }), ["chromium", "--new-window"])
+  same(model.guessExec({ class: "GeForceNOW" }), ["gtk-launch", "com.nvidia.geforcenow.desktop"])
+  same(
+    model.guessExec({ class: "chrome-x.com__-Profile_1" }),
+    ["chromium", "--profile-directory=Profile 1", "--app=https://x.com"]
+  )
+  same(model.guessExec({ class: "chrome-x.com__-Profile_1" }).indexOf("com__-profile_1"), -1)
+  same(model.guessExec({ class: "mpv" }), ["mpv"])
+  assert.strictEqual(model.guessExec({ class: "chrome-x.com__-Profile_1", exec: ["com__-profile_1"] }).join(" "),
+    "chromium --profile-directory=Profile 1 --app=https://x.com")
+  same(
+    model.resolveExec({ class: "GeForceNOW", exec: ["geforcenow"] }),
+    ["gtk-launch", "com.nvidia.geforcenow.desktop"]
+  )
+  const missing = model.launchMissingPlan({
+    extras: model.defaultExtras(),
+    workspaces: [{
+      n: 2,
+      windows: [{ class: "chrome-x.com__-Profile_1", title: "X", exec: ["com__-profile_1"] }]
+    }]
+  }, "[]")
+  same(missing.launches[0].exec, ["chromium", "--profile-directory=Profile 1", "--app=https://x.com"])
   const cards = model.pickerCards(model.demoDesks(), "")
   assert.strictEqual(cards[0].kind, "desk")
   assert.strictEqual(cards[0].id, "writing")

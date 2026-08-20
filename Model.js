@@ -273,12 +273,57 @@ function guessExec(win) {
   var last = lastClassSegment(lower)
   if (lower === "dev.zed.zed" || last === "zed") return ["zed"]
   if (lower.indexOf("ghostty") >= 0 || last === "ghostty") return ["ghostty"]
+  if (lower.indexOf("geforce") >= 0) return ["gtk-launch", "com.nvidia.geforcenow.desktop"]
+  var pwa = chromePwaExec(cls)
+  if (pwa && pwa.length) return pwa
   // Two Chromiums after reboot are best-effort; --new-window is the hint we can give.
   if (lower.indexOf("chromium") >= 0 || last === "chromium" || last === "chrome" || last === "google-chrome") {
     return ["chromium", "--new-window"]
   }
-  if (last) return [last]
+  if (/^com(\.[a-z0-9-]+)+$/.test(lower)) return ["gtk-launch", cls + ".desktop"]
+  if (/^[a-z][a-z0-9-]+$/.test(lower) && lower.indexOf("__") === -1) return [lower]
   return []
+}
+
+function chromePwaExec(cls) {
+  var raw = String(cls || "")
+  if (raw.toLowerCase().indexOf("chrome-") !== 0) return null
+  var rest = raw.slice(7)
+  var parts = rest.split("__")
+  var host = String(parts[0] || "").replace(/\/$/, "")
+  if (!host || host.indexOf(".") === -1) return null
+  var argv = ["chromium"]
+  var profile = parts.length > 1 ? String(parts[parts.length - 1] || "") : ""
+  profile = profile.replace(/^-+/, "")
+  var pm = /^(profile_\d+)$/i.exec(profile) || /profile_(\d+)/i.exec(profile)
+  if (pm) {
+    var label = /^profile_\d+$/i.test(profile) ? profile.replace(/_/g, " ") : "Profile " + pm[1]
+    argv.push("--profile-directory=" + label)
+  }
+  argv.push("--app=https://" + host)
+  return argv
+}
+
+function isUsableExec(argv, win) {
+  if (!isArray(argv) || !argv.length) return false
+  var cmd = String(argv[0] || "")
+  if (!cmd) return false
+  if (cmd.indexOf("__") >= 0) return false
+  if (/profile_\d/i.test(cmd)) return false
+  if (cmd.charAt(0) === "/") return true
+  if (cmd === "gtk-launch" || cmd === "uwsm-app" || cmd === "chromium" || cmd === "zed" || cmd === "ghostty") return true
+  var cls = String((win && (win.class || win.initialClass)) || "").toLowerCase()
+  var last = lastClassSegment(cls)
+  if (cls.indexOf("chrome-") === 0) return false
+  if (cls.indexOf("geforce") >= 0) return false
+  if (last && cmd.toLowerCase() === last && cls !== last) return false
+  return /^[A-Za-z0-9][A-Za-z0-9._+-]*$/.test(cmd)
+}
+
+function resolveExec(win) {
+  var stored = win && isArray(win.exec) ? copyStrings(win.exec) : []
+  if (isUsableExec(stored, win)) return stored
+  return guessExec(win)
 }
 
 function snapshotRecipe(stage, name, extras, lastWorkspace, nowIso) {
@@ -450,7 +495,7 @@ function launchMissingPlan(desk, clientsJson) {
         if (matched.address) used.push(String(matched.address))
         continue
       }
-      var exec = rw && isArray(rw.exec) && rw.exec.length ? copyStrings(rw.exec) : guessExec(rw)
+      var exec = resolveExec(rw)
       if (!exec || !exec.length) continue
       launches.push({
         n: n,
@@ -807,7 +852,7 @@ function normalizeDesk(desk) {
 
 function normalizeRecipeWindow(w) {
   var src = w || {}
-  var exec = isArray(src.exec) ? copyStrings(src.exec) : guessExec(src)
+  var exec = resolveExec(src)
   var rec = {
     class: String(src.class || ""),
     initialClass: String(src.initialClass || src.class || ""),
