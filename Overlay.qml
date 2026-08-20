@@ -67,7 +67,7 @@ Item {
   readonly property bool pickerEmpty: root.mode === "picker" && root.deskCount === 0
 
   function pluginId() {
-    return (root.manifest && root.manifest.id) || "modoterra.omadesk"
+    return (root.manifest && root.manifest.id) || "com.mdtrr.omadesk"
   }
 
   function emptyState() {
@@ -1043,7 +1043,7 @@ Item {
   }
 
   IpcHandler {
-    target: "modoterra.omadesk"
+    target: "com.mdtrr.omadesk"
     function open(): void { root.open("{}") }
     function close(): void { root.dismiss() }
     function show(): void { root.open("{}") }
@@ -1243,7 +1243,7 @@ Item {
     visible: root.opened
     anchors { top: true; bottom: true; left: true; right: true }
     color: "transparent"
-    WlrLayershell.namespace: "modoterra-omadesk"
+    WlrLayershell.namespace: "com-mdtrr-omadesk"
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
     exclusionMode: ExclusionMode.Ignore

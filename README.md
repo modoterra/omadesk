@@ -30,20 +30,20 @@ There is no installer script. The plugin is QML + JavaScript only.
 Put the chip next to the stock workspace numbers:
 
 ```sh
-omarchy bar move modoterra.omadesk --section left
+omarchy bar move com.mdtrr.omadesk --section left
 ```
 
 ## Summon
 
 ```sh
-omarchy-shell shell toggle modoterra.omadesk
+omarchy-shell shell toggle com.mdtrr.omadesk
 ```
 
 Suggested bind: Super+D. Super+Space stays the Omarchy menu. Super+Shift+D
 is Omarchy’s Docker TUI, so this plugin does not take that key.
 
 ```lua
-o.bind("SUPER + D", "Desks", "omarchy-shell shell toggle modoterra.omadesk")
+o.bind("SUPER + D", "Desks", "omarchy-shell shell toggle com.mdtrr.omadesk")
 ```
 
 ## Keys
@@ -65,7 +65,7 @@ o.bind("SUPER + D", "Desks", "omarchy-shell shell toggle modoterra.omadesk")
 ## Remove
 
 ```sh
-omarchy plugin remove modoterra.omadesk
+omarchy plugin remove com.mdtrr.omadesk
 ```
 
 Recipes live in `~/.config/omarchy/omadesk/desks.json`. Forget deletes the

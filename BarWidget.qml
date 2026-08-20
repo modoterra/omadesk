@@ -7,7 +7,7 @@ import "Model.js" as Model
 
 BarWidget {
   id: root
-  moduleName: "modoterra.omadesk"
+  moduleName: "com.mdtrr.omadesk"
 
   readonly property string desksPath: (Quickshell.env("HOME") || "") + "/.config/omarchy/omadesk/desks.json"
   readonly property color barFg: bar ? bar.barForeground : Color.foreground
