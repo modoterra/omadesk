@@ -1,0 +1,73 @@
+[
+  {
+    "id": 1,
+    "name": "1",
+    "monitor": "DP-1",
+    "monitorID": 0,
+    "windows": 1,
+    "hasfullscreen": false,
+    "lastwindow": "0x55f11fe15110",
+    "lastwindowtitle": "charcana"
+  },
+  {
+    "id": 2,
+    "name": "2",
+    "monitor": "DP-1",
+    "monitorID": 0,
+    "windows": 1,
+    "hasfullscreen": false,
+    "lastwindow": "0x55f11fe15220",
+    "lastwindowtitle": "ghostty"
+  },
+  {
+    "id": 3,
+    "name": "3",
+    "monitor": "DP-1",
+    "monitorID": 0,
+    "windows": 1,
+    "hasfullscreen": false,
+    "focused": true,
+    "lastwindow": "0x55f11fe15330",
+    "lastwindowtitle": "draft"
+  },
+  {
+    "id": -98,
+    "name": "special:scratchpad",
+    "monitor": "DP-1",
+    "monitorID": 0,
+    "windows": 1,
+    "hasfullscreen": false,
+    "lastwindow": "0x55f11fe15aaa",
+    "lastwindowtitle": "scratch notes"
+  },
+  {
+    "id": 11,
+    "name": "omadesk-writing-1",
+    "monitor": "DP-1",
+    "monitorID": 0,
+    "windows": 1,
+    "hasfullscreen": false,
+    "lastwindow": "0x55f11fe15bbb",
+    "lastwindowtitle": "parked writing"
+  },
+  {
+    "id": 12,
+    "name": "omadesk-call-1",
+    "monitor": "DP-1",
+    "monitorID": 0,
+    "windows": 1,
+    "hasfullscreen": false,
+    "lastwindow": "0x55f11fe15ccc",
+    "lastwindowtitle": "Meet"
+  },
+  {
+    "id": 13,
+    "name": "omadesk-call-2",
+    "monitor": "DP-1",
+    "monitorID": 0,
+    "windows": 1,
+    "hasfullscreen": false,
+    "lastwindow": "0x55f11fe15c2c",
+    "lastwindowtitle": "notes"
+  }
+]

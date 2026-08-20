@@ -6,9 +6,17 @@
   "author": "Christoffer Hallas (Modoterra)",
   "license": "MIT",
   "description": "Named-desk overlay for Omarchy. Sixteen workspaces stay 1–10; switching parks a room and brings another back.",
-  "kinds": ["overlay"],
+  "kinds": ["overlay", "bar-widget"],
   "keepLoaded": true,
   "entryPoints": {
-    "overlay": "Overlay.qml"
+    "overlay": "Overlay.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Desks",
+    "description": "Shows the current named desk and opens the Desks overlay.",
+    "category": "Work",
+    "allowMultiple": false,
+    "defaultSection": "left"
   }
 }

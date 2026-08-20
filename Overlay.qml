@@ -12,32 +12,95 @@ Item {
   property var shell: null
   property var manifest: null
   property bool opened: false
+  property string mode: "picker"
+  property string filterText: ""
+  property int cursorIndex: 0
+  property var desksState: ({ version: 1, currentId: null, desks: [] })
+  property var cards: []
+  property var stage: ({})
+  property string nameText: ""
+  property var targetDesk: null
+  property var extrasDesk: null
+  property var extrasDraft: ({ dnd: "leave", theme: "leave", launchMissing: true })
+  property var forgetDesk: null
+  property int forgetIndex: 0
+  property bool busy: false
+  property bool desksDirReady: false
+  property bool debugDemo: false
+  property string pendingWrite: ""
+  property string clientsJson: ""
+  property string workspacesJson: ""
+  property var stageCallback: null
+  property bool stageQueued: false
+  property string batchPhase: ""
+  property var pendingLaunches: []
+  property var pendingFocusWs: ""
+  property var pendingDnd: ""
+  property string switchToId: ""
 
   property color background: Color.menu.background
   property color foreground: Color.menu.text
   property color border: Color.menu.border
   property var borderSpec: Border.surfaceSpec("menu", "border", border, Math.max(1, Style.space(2)))
   property color scrim: Color.menu.scrim
+  property color selectedBackground: Color.menu.selectedBackground
+  property color fill: Util.alpha(Color.menu.text, 0.04)
+  property color fillHover: Color.menu.selectedBackground
+  property color fillSelected: Util.alpha(Color.menu.text, 0.18)
+  property color borderSoft: Util.alpha(Color.menu.text, 0.18)
+  property color tileFill: Util.alpha(Color.menu.text, 0.06)
+  property color muted: Color.muted
+  property color accent: Color.accent
+  property color urgent: Color.urgent
   readonly property int cornerRadius: Style.cornerRadius
   property string fontFamily: Style.font.menuFamily
-  property int contentMargin: Style.spacing.panelPadding
+  property int contentMargin: Style.space(16)
+  property int headerHeight: Math.max(Style.space(34), Style.font.heading + Style.spacing.controlPaddingY)
   property int cardWidth: Math.min(Style.space(560), panel.width - Style.gapsOut * 2)
+  property int gridGap: Style.space(8)
+  property int cellWidth: Math.max(1, Math.floor((cardWidth - card.contentLeftInset - card.contentRightInset - gridGap) / 2))
+  readonly property string desksDir: (Quickshell.env("HOME") || "") + "/.config/omarchy/omadesk"
+  readonly property string desksPath: desksDir + "/desks.json"
+  readonly property bool dialogOpen: root.mode !== "picker"
+  readonly property int deskCount: (root.desksState && root.desksState.desks && root.desksState.desks.length) ? root.desksState.desks.length : 0
+  readonly property bool pickerEmpty: root.mode === "picker" && root.deskCount === 0
 
   function pluginId() {
     return (root.manifest && root.manifest.id) || "modoterra.omadesk"
   }
 
+  function emptyState() {
+    if (typeof Model.emptyState === "function") return Model.emptyState()
+    return { version: 1, currentId: null, desks: [] }
+  }
+
   function open(payloadJson) {
+    var payload = ({})
+    try { payload = JSON.parse(payloadJson || "{}") } catch (e) { payload = ({}) }
+    if (payload.debugDemo) root.debugDemo = true
+
     root.opened = true
+    root.mode = "picker"
+    root.filterText = ""
+    root.cursorIndex = 0
+    root.busy = false
+    root.reloadDesksFile()
+    root.refreshStage(null)
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+
+    // Hidden debug path: only the omadesk-dev slugs may park/restore live windows.
+    if (payload.debugPark && payload.fromSlug && payload.toSlug)
+      root.debugParkRestore(String(payload.fromSlug), String(payload.toSlug))
   }
 
   function close() {
     root.opened = false
+    root.mode = "picker"
   }
 
   function dismiss() {
     root.opened = false
+    root.mode = "picker"
     if (root.shell && typeof root.shell.hide === "function")
       root.shell.hide(root.pluginId())
   }
@@ -47,6 +110,885 @@ Item {
     else root.open("{}")
   }
 
+  function cancelDialog() {
+    root.mode = "picker"
+    root.nameText = ""
+    root.targetDesk = null
+    root.extrasDesk = null
+    root.forgetDesk = null
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function applyEscape() {
+    if (root.dialogOpen) root.cancelDialog()
+    else if (root.filterText) root.setFilter("")
+    else root.dismiss()
+  }
+
+  function setFilter(text) {
+    root.filterText = String(text || "")
+    root.cursorIndex = 0
+    root.rebuildCards()
+  }
+
+  function reloadDesksFile() {
+    desksFile.reload()
+  }
+
+  function applyDesksRaw(raw) {
+    var next = null
+    if (typeof Model.readDesks === "function") {
+      try {
+        var parsed = Model.readDesks(raw)
+        if (parsed && parsed.ok === false) next = root.emptyState()
+        else if (parsed && parsed.state) next = parsed.state
+        else next = parsed
+      } catch (e) { next = null }
+    }
+    if (!next) {
+      try {
+        var fallback = JSON.parse(String(raw || "").trim() || "null")
+        if (fallback && typeof fallback === "object") next = fallback
+      } catch (e) {
+        next = null
+      }
+    }
+    if (!next || typeof next !== "object") next = root.emptyState()
+    if (!next.desks) next.desks = []
+    var emptyFile = !next.desks.length
+    if (emptyFile && root.debugDemo && typeof Model.demoDesks === "function") {
+      try { next = Model.demoDesks() } catch (e) { next = next }
+    }
+    root.desksState = next
+    root.rebuildCards()
+  }
+
+  function persistDesks() {
+    var raw = ""
+    if (typeof Model.writeDesks === "function") {
+      try { raw = Model.writeDesks(root.desksState) } catch (e) { raw = "" }
+    }
+    if (typeof raw !== "string" || raw === "")
+      raw = JSON.stringify(root.desksState || root.emptyState(), null, 2) + "\n"
+    root.pendingWrite = raw
+    if (!root.desksDirReady) {
+      mkdirProc.command = ["mkdir", "-p", root.desksDir]
+      mkdirProc.running = true
+      return
+    }
+    desksFile.setText(raw)
+  }
+
+  function deskList() {
+    return (root.desksState && Array.isArray(root.desksState.desks)) ? root.desksState.desks : []
+  }
+
+  function deskById(id) {
+    if (id === undefined || id === null || id === "") return null
+    var desks = root.deskList()
+    for (var i = 0; i < desks.length; i++) {
+      if (String(desks[i].id) === String(id)) return desks[i]
+    }
+    return null
+  }
+
+  function extrasOf(desk) {
+    var extras = (desk && desk.extras) ? desk.extras : ({})
+    var launch = extras.launchMissing
+    var launchYes = !(launch === false || launch === "no" || launch === "off")
+    var dnd = extras.dnd
+    if (dnd === true) dnd = "on"
+    if (dnd === false) dnd = "off"
+    if (dnd !== "on" && dnd !== "off") dnd = "leave"
+    return {
+      dnd: dnd,
+      theme: "leave",
+      launchMissing: launchYes
+    }
+  }
+
+  function tileLabel(client) {
+    if (!client) return ""
+    if (client.label) return String(client.label)
+    var klass = String(client.class || client.initialClass || "")
+    var title = String(client.title || client.initialTitle || "")
+    if (klass && title) return klass + " · " + title
+    return title || klass
+  }
+
+  function tilesFrom(source, limit) {
+    if (!source) return []
+    if (typeof Model.previewTiles === "function") {
+      try {
+        var preview = Model.previewTiles(source, limit)
+        if (Array.isArray(preview) && preview.length) return preview
+      } catch (e) {}
+    }
+    if (Array.isArray(source.tiles) && source.tiles.length)
+      return source.tiles.slice(0, limit || source.tiles.length)
+
+    var spaces = source.workspaces
+    if ((!spaces || !spaces.length) && source.recipe)
+      spaces = source.recipe.workspaces
+    if (!Array.isArray(spaces)) spaces = []
+
+    var max = limit || Math.min(3, Math.max(spaces.length, 3))
+    var out = []
+    for (var i = 0; i < max; i++) {
+      var ws = spaces[i] || null
+      var id = ws && (ws.id !== undefined ? ws.id : ws.workspace)
+      if (id === undefined) id = i + 1
+      var clients = (ws && (ws.clients || ws.windows)) || []
+      var parts = []
+      for (var c = 0; c < clients.length; c++) {
+        var piece = root.tileLabel(clients[c])
+        if (piece) parts.push(piece)
+      }
+      var vacant = parts.length === 0
+      out.push({ id: id, label: vacant ? "empty" : parts.join(" · "), vacant: vacant })
+    }
+    return out
+  }
+
+  function deskMeta(desk) {
+    if (desk && desk.meta) return String(desk.meta)
+    var tiles = root.tilesFrom(desk, 10)
+    var used = 0
+    for (var i = 0; i < tiles.length; i++) {
+      if (!tiles[i].vacant) used += 1
+    }
+    var when = "now"
+    if (desk && desk.lastUsedLabel) when = String(desk.lastUsedLabel)
+    else if (desk && desk.lastUsed) {
+      var then = Number(desk.lastUsed)
+      var delta = Date.now() - then
+      if (!isFinite(then) || !isFinite(delta) || delta < 60000) when = "now"
+      else if (delta < 3600000) when = Math.round(delta / 60000) + " min ago"
+      else if (delta < 86400000) when = Math.round(delta / 3600000) + " hours ago"
+      else if (delta < 172800000) when = "yesterday"
+      else when = Math.round(delta / 86400000) + " days ago"
+    }
+    return used + " space" + (used === 1 ? "" : "s") + " · last used " + when
+  }
+
+  function deskToCard(desk) {
+    var extras = root.extrasOf(desk)
+    return {
+      kind: "desk",
+      id: desk.id,
+      name: desk.name || "",
+      here: root.desksState && String(root.desksState.currentId) === String(desk.id),
+      dnd: extras.dnd === "on",
+      tiles: root.tilesFrom(desk, 3),
+      meta: root.deskMeta(desk),
+      desk: desk
+    }
+  }
+
+  function newDeskCard() {
+    return { kind: "new", name: "+ new desk", meta: "n saves what is on screen", tiles: [] }
+  }
+
+  function rebuildCards() {
+    var cards = []
+    if (typeof Model.pickerCards === "function") {
+      try { cards = Model.pickerCards(root.desksState, root.filterText) || [] } catch (e) { cards = [] }
+    }
+    if (!Array.isArray(cards) || cards.length === 0) {
+      var desks = root.deskList()
+      if (typeof Model.filterDesks === "function") {
+        try {
+          var filtered = Model.filterDesks(desks, root.filterText)
+          if (Array.isArray(filtered)) desks = filtered
+          else if (filtered && Array.isArray(filtered.desks)) desks = filtered.desks
+        } catch (e) {}
+      } else if (root.filterText) {
+        var q = String(root.filterText).toLowerCase()
+        var hit = []
+        for (var i = 0; i < desks.length; i++) {
+          if (String(desks[i].name || "").toLowerCase().indexOf(q) >= 0) hit.push(desks[i])
+        }
+        desks = hit
+      }
+      cards = []
+      for (var j = 0; j < desks.length; j++) cards.push(root.deskToCard(desks[j]))
+    }
+    var hasNew = false
+    for (var k = 0; k < cards.length; k++) {
+      if (cards[k] && cards[k].kind === "new") hasNew = true
+    }
+    if (!hasNew && !root.filterText) cards.push(root.newDeskCard())
+    for (var t = 0; t < cards.length; t++) {
+      if (!cards[t] || cards[t].kind === "new") continue
+      if (cards[t].tiles && cards[t].tiles.length) continue
+      var src = root.deskById(cards[t].id) || cards[t].desk || cards[t]
+      cards[t].tiles = root.tilesFrom(src, 3)
+      if (!cards[t].meta) cards[t].meta = root.deskMeta(src)
+      if (cards[t].here === undefined)
+        cards[t].here = !!(root.desksState && String(root.desksState.currentId) === String(cards[t].id))
+      if (cards[t].dnd === undefined)
+        cards[t].dnd = root.extrasOf(src).dnd === "on"
+    }
+    root.cards = cards
+    if (root.cursorIndex >= cards.length) root.cursorIndex = Math.max(0, cards.length - 1)
+    if (root.cursorIndex < 0) root.cursorIndex = 0
+  }
+
+  function cardAt(index) {
+    if (index < 0 || index >= root.cards.length) return null
+    return root.cards[index]
+  }
+
+  function highlightedCard() {
+    return root.cardAt(root.cursorIndex)
+  }
+
+  function highlightedDesk() {
+    var card = root.highlightedCard()
+    if (card && card.kind !== "new")
+      return root.deskById(card.id) || card.desk || null
+    return root.deskById(root.desksState ? root.desksState.currentId : null)
+  }
+
+  function moveCursor(dx, dy) {
+    var count = root.cards.length
+    if (count === 0) return
+    var next = root.cursorIndex
+    if (typeof Model.moveCursor === "function") {
+      try {
+        var moved = Model.moveCursor(root.cursorIndex, count, dx, dy, 2)
+        if (moved && typeof moved === "object") {
+          if (typeof moved.cursor === "number") moved = moved.cursor
+          else if (typeof moved.index === "number") moved = moved.index
+        }
+        moved = Number(moved)
+        if (isFinite(moved)) next = moved
+        else next = NaN
+      } catch (e) {
+        next = NaN
+      }
+    } else {
+      next = NaN
+    }
+    if (!isFinite(next)) {
+      if (dy !== 0) next = root.cursorIndex + dy * 2
+      else next = root.cursorIndex + dx
+    }
+    if (next < 0) next = 0
+    if (next >= count) next = count - 1
+    root.cursorIndex = next
+  }
+
+  function jumpCursor(n) {
+    var count = root.cards.length
+    if (count === 0) return
+    var next = n - 1
+    if (typeof Model.jumpCursor === "function") {
+      try {
+        var jumped = Model.jumpCursor(root.cursorIndex, count, n)
+        if (jumped && typeof jumped === "object") {
+          if (typeof jumped.cursor === "number") jumped = jumped.cursor
+          else if (typeof jumped.index === "number") jumped = jumped.index
+        }
+        jumped = Number(jumped)
+        if (isFinite(jumped)) next = jumped
+      } catch (e) {}
+    }
+    if (next < 0) next = 0
+    if (next >= count) next = count - 1
+    root.cursorIndex = next
+  }
+
+  function uniqueDeskId(name) {
+    var ids = []
+    var desks = root.deskList()
+    for (var i = 0; i < desks.length; i++) ids.push(desks[i].id)
+    if (typeof Model.uniqueId === "function") {
+      try {
+        var id = Model.uniqueId(name, ids)
+        if (id) return String(id)
+      } catch (e) {}
+    }
+    var slug = String(name || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
+    if (!slug) slug = "desk"
+    var candidate = slug
+    var n = 2
+    var used = ({})
+    for (var j = 0; j < ids.length; j++) used[String(ids[j])] = true
+    while (used[candidate]) {
+      candidate = slug + "-" + n
+      n += 1
+    }
+    return candidate
+  }
+
+  function snapshotRecipe(name) {
+    if (typeof Model.snapshotRecipe === "function") {
+      try {
+        return Model.snapshotRecipe(
+          root.stage,
+          name || "",
+          typeof Model.defaultExtras === "function" ? Model.defaultExtras() : ({ dnd: "leave", launchMissing: true }),
+          root.stage && root.stage.lastWorkspace,
+          new Date().toISOString()
+        )
+      } catch (e) { return null }
+    }
+    return root.stage || null
+  }
+
+  function assignState(next) {
+    if (next && typeof next === "object") root.desksState = next
+    root.rebuildCards()
+    root.persistDesks()
+  }
+
+  function openSave() {
+    root.mode = "save"
+    root.nameText = ""
+    if (nameInput) nameInput.text = ""
+    root.refreshStage(function(ok) {
+      Qt.callLater(function() {
+        if (nameInput) nameInput.forceActiveFocus()
+      })
+      if (!ok) return
+    })
+  }
+
+  function openRename() {
+    var desk = root.highlightedDesk()
+    if (!desk) return
+    root.mode = "rename"
+    root.targetDesk = desk
+    root.nameText = String(desk.name || "")
+    Qt.callLater(function() {
+      if (nameInput) {
+        nameInput.text = root.nameText
+        nameInput.selectAll()
+        nameInput.forceActiveFocus()
+      }
+    })
+  }
+
+  function openExtras() {
+    var desk = root.highlightedDesk()
+    if (!desk) return
+    root.mode = "extras"
+    root.extrasDesk = desk
+    root.extrasDraft = root.extrasOf(desk)
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function openForget() {
+    var desk = root.highlightedDesk()
+    if (!desk) return
+    root.mode = "forget"
+    root.forgetDesk = desk
+    root.forgetIndex = 0
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function confirmSave() {
+    var name = String(nameInput ? nameInput.text : root.nameText).replace(/^\s+|\s+$/g, "")
+    if (!name) return
+    root.refreshStage(function(ok) {
+      if (!ok) return
+      var recipe = root.snapshotRecipe(name)
+      var id = root.uniqueDeskId(name)
+      if (recipe && typeof recipe === "object") {
+        recipe.id = id
+        recipe.name = name
+      }
+      var desk = recipe && recipe.workspaces ? recipe : {
+        id: id,
+        name: name,
+        recipe: recipe,
+        extras: { dnd: "leave", launchMissing: true },
+        lastUsed: Date.now()
+      }
+      var next = null
+      if (typeof Model.saveDesk === "function") {
+        try { next = Model.saveDesk(root.desksState, desk) } catch (e) { next = null }
+      }
+      if (!next) {
+        next = Util.cloneJson(root.desksState || root.emptyState())
+        if (!next.desks) next.desks = []
+        next.desks.push(desk)
+        next.currentId = id
+      }
+      root.mode = "picker"
+      root.nameText = ""
+      root.assignState(next)
+      Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+    })
+  }
+
+  function confirmRename() {
+    var desk = root.targetDesk
+    if (!desk) { root.cancelDialog(); return }
+    var name = String(nameInput ? nameInput.text : root.nameText).replace(/^\s+|\s+$/g, "")
+    if (!name) return
+    var next = null
+    if (typeof Model.renameDesk === "function") {
+      try { next = Model.renameDesk(root.desksState, desk.id, name) } catch (e) { next = null }
+    }
+    if (!next) {
+      next = Util.cloneJson(root.desksState || root.emptyState())
+      var desks = next.desks || []
+      for (var i = 0; i < desks.length; i++) {
+        if (String(desks[i].id) === String(desk.id)) desks[i].name = name
+      }
+    }
+    root.mode = "picker"
+    root.targetDesk = null
+    root.assignState(next)
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function confirmName() {
+    if (root.mode === "save") root.confirmSave()
+    else if (root.mode === "rename") root.confirmRename()
+  }
+
+  function confirmExtras() {
+    var desk = root.extrasDesk
+    if (!desk) { root.cancelDialog(); return }
+    var next = null
+    if (typeof Model.setExtras === "function") {
+      try { next = Model.setExtras(root.desksState, desk.id, root.extrasDraft) } catch (e) { next = null }
+    }
+    if (!next) {
+      next = Util.cloneJson(root.desksState || root.emptyState())
+      var desks = next.desks || []
+      for (var i = 0; i < desks.length; i++) {
+        if (String(desks[i].id) === String(desk.id)) desks[i].extras = Util.cloneJson(root.extrasDraft)
+      }
+    }
+    root.mode = "picker"
+    root.extrasDesk = null
+    root.assignState(next)
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function confirmForget() {
+    var desk = root.forgetDesk
+    if (!desk) { root.cancelDialog(); return }
+    var next = null
+    if (typeof Model.forgetDesk === "function") {
+      try { next = Model.forgetDesk(root.desksState, desk.id) } catch (e) { next = null }
+    }
+    if (!next) {
+      next = Util.cloneJson(root.desksState || root.emptyState())
+      var kept = []
+      var desks = next.desks || []
+      for (var i = 0; i < desks.length; i++) {
+        if (String(desks[i].id) !== String(desk.id)) kept.push(desks[i])
+      }
+      next.desks = kept
+      if (next.currentId !== undefined && String(next.currentId) === String(desk.id))
+        next.currentId = null
+    }
+    root.mode = "picker"
+    root.forgetDesk = null
+    root.assignState(next)
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function updateHere() {
+    var id = root.desksState ? root.desksState.currentId : null
+    if (!id) return
+    root.refreshStage(function(ok) {
+      if (!ok) return
+      var next = null
+      if (typeof Model.updateDesk === "function") {
+        try { next = Model.updateDesk(root.desksState, id, root.stage, new Date().toISOString()) } catch (e) { next = null }
+      }
+      if (!next) {
+        next = Util.cloneJson(root.desksState || root.emptyState())
+        var desks = next.desks || []
+        for (var i = 0; i < desks.length; i++) {
+          if (String(desks[i].id) === String(id)) {
+            desks[i].recipe = recipe
+            desks[i].lastUsed = Date.now()
+          }
+        }
+      }
+      root.assignState(next)
+    })
+  }
+
+  function activateHighlighted() {
+    if (root.pickerEmpty) {
+      root.openSave()
+      return
+    }
+    var card = root.highlightedCard()
+    if (!card || card.kind === "new") {
+      root.openSave()
+      return
+    }
+    root.switchTo(root.deskById(card.id) || card.desk)
+  }
+
+  function currentSlug() {
+    if (typeof Model.currentSlug === "function") {
+      try {
+        var slug = Model.currentSlug(root.desksState)
+        if (slug) return String(slug)
+      } catch (e) {}
+    }
+    if (root.desksState && root.desksState.currentId) return String(root.desksState.currentId)
+    return "unnamed"
+  }
+
+  function allowedDebugSlug(slug) {
+    var s = String(slug || "")
+    return s === "omadesk-dev" || s === "omadesk-dev-a" || s === "omadesk-dev-b" ||
+      s === "dev" || s === "dev-a" || s === "dev-b"
+  }
+
+  function debugParkRestore(fromSlug, toSlug) {
+    if (!root.allowedDebugSlug(fromSlug) || !root.allowedDebugSlug(toSlug)) return
+    root.refreshStage(function(ok) {
+      if (!ok) return
+      root.runParkRestore(fromSlug, toSlug, null)
+    })
+  }
+
+  function switchTo(desk) {
+    if (!desk || desk.kind === "new" || root.busy) return
+    if (root.desksState && String(root.desksState.currentId) === String(desk.id)) {
+      root.dismiss()
+      return
+    }
+    root.busy = true
+    root.targetDesk = desk
+    root.switchToId = String(desk.id)
+    root.refreshStage(function(ok) {
+      if (!ok) {
+        root.busy = false
+        return
+      }
+      root.runParkRestore(root.currentSlug(), String(desk.id), desk)
+    })
+  }
+
+  function batchString(obj) {
+    if (!obj) return ""
+    if (typeof obj === "string") return obj
+    if (obj.batch) return String(obj.batch)
+    if (obj.park && obj.park.batch) return String(obj.park.batch)
+    if (Array.isArray(obj.dispatches) && obj.dispatches.length) {
+      var parts = []
+      for (var i = 0; i < obj.dispatches.length; i++)
+        parts.push("dispatch " + obj.dispatches[i])
+      return parts.join("; ")
+    }
+    return ""
+  }
+
+  function lastWorkspaceOf(desk, plan) {
+    if (plan && plan.lastWorkspace !== undefined && plan.lastWorkspace !== null)
+      return plan.lastWorkspace
+    if (desk && desk.recipe && desk.recipe.lastWorkspace !== undefined)
+      return desk.recipe.lastWorkspace
+    if (desk && desk.lastWorkspace !== undefined) return desk.lastWorkspace
+    if (root.stage && root.stage.lastWorkspace !== undefined) return root.stage.lastWorkspace
+    return 1
+  }
+
+  function runParkRestore(fromSlug, toSlug, desk) {
+    // Two Chromiums on two workspaces work during the day because we move
+    // specific parked addresses. After reboot that case is best-effort
+    // (`--new-window` if we have it).
+    if (typeof Model.parkPlan !== "function") {
+      root.busy = false
+      return
+    }
+    var plan = null
+    try { plan = Model.parkPlan(root.stage, fromSlug, toSlug, desk) } catch (e) {
+      root.busy = false
+      return
+    }
+    if (!plan) {
+      root.busy = false
+      return
+    }
+
+    var parkBatch = ""
+    if (plan.park) parkBatch = root.batchString(plan.park)
+    else parkBatch = root.batchString(plan)
+
+    var restoreBatch = ""
+    if (String(fromSlug) === String(toSlug) && typeof Model.restoreFromPark === "function") {
+      try { restoreBatch = root.batchString(Model.restoreFromPark(plan.park || plan)) } catch (e) { restoreBatch = "" }
+    } else if (plan.restore) {
+      restoreBatch = root.batchString(plan.restore)
+    } else if (typeof Model.restorePlan === "function") {
+      try { restoreBatch = root.batchString(Model.restorePlan(root.stage, toSlug, desk)) } catch (e) { restoreBatch = "" }
+    }
+
+    root.pendingFocusWs = String(root.lastWorkspaceOf(desk, plan))
+    root.pendingDnd = ""
+    root.pendingLaunches = []
+    if (desk) {
+      var extras = root.extrasOf(desk)
+      if (extras.dnd === "on" || extras.dnd === "off") root.pendingDnd = extras.dnd
+      if (extras.launchMissing && typeof Model.launchMissingPlan === "function") {
+        try {
+          var launches = Model.launchMissingPlan(desk, root.stage)
+          if (launches && Array.isArray(launches.launches)) launches = launches.launches
+          root.pendingLaunches = Array.isArray(launches) ? launches : []
+        } catch (e) { root.pendingLaunches = [] }
+      }
+    }
+
+    root.pendingPark = parkBatch
+    root.pendingRestore = restoreBatch
+    root.startBatch(parkBatch, "park")
+  }
+
+  property string pendingPark: ""
+  property string pendingRestore: ""
+
+  function startBatch(batch, phase) {
+    root.batchPhase = phase
+    if (!batch) {
+      Qt.callLater(function() { root.onBatchExited(0, phase) })
+      return
+    }
+    if (batchProc.running) {
+      root.busy = false
+      return
+    }
+    batchProc.command = ["hyprctl", "--batch", batch]
+    batchProc.running = true
+  }
+
+  function onBatchExited(code, phase) {
+    if (code !== 0) {
+      root.busy = false
+      root.batchPhase = ""
+      return
+    }
+    if (phase === "park") {
+      Qt.callLater(function() { root.startBatch(root.pendingRestore, "restore") })
+      return
+    }
+    if (phase === "restore") {
+      Qt.callLater(function() { root.runFocus() })
+      return
+    }
+  }
+
+  function focusDispatch(ws) {
+    if (typeof Model.focusDispatch === "function") {
+      try {
+        var d = Model.focusDispatch(String(ws))
+        if (d) return String(d)
+      } catch (e) {}
+    }
+    return "hl.dsp.focus({ workspace = \"" + String(ws) + "\" })"
+  }
+
+  function runFocus() {
+    var ws = root.pendingFocusWs || "1"
+    if (focusProc.running) {
+      root.finishSwitch()
+      return
+    }
+    focusProc.command = ["hyprctl", "dispatch", root.focusDispatch(ws)]
+    focusProc.running = true
+  }
+
+  function launchMissing() {
+    var launches = Array.isArray(root.pendingLaunches) ? root.pendingLaunches : []
+    for (var i = 0; i < launches.length; i++) root.launchOne(launches[i])
+  }
+
+  function launchOne(item) {
+    if (!item) return
+    var argv = item.argv || item.args || []
+    if (typeof argv === "string") argv = [argv]
+    if ((!argv || !argv.length) && item.exec) {
+      if (Array.isArray(item.exec)) argv = item.exec
+      else argv = [String(item.exec)]
+    }
+    if (!argv || !argv.length) return
+    var cmd = "uwsm-app --"
+    for (var i = 0; i < argv.length; i++)
+      cmd += " " + Util.shellQuote(argv[i])
+    var ws = item.workspace !== undefined && item.workspace !== null ? String(item.workspace) : ""
+    if (ws) {
+      var lua = "hl.dsp.exec_cmd(" + JSON.stringify(cmd) + ", { workspace = " + JSON.stringify(ws) + " })"
+      Quickshell.execDetached(["hyprctl", "dispatch", lua])
+    } else {
+      // placement is best-effort
+      Quickshell.execDetached(["uwsm-app", "--"].concat(argv))
+    }
+  }
+
+  function applyDnd() {
+    if (!root.pendingDnd) return
+    dndProc.command = ["omarchy-shell", "notifications", "setDnd", root.pendingDnd]
+    dndProc.running = true
+  }
+
+  function finishSwitch() {
+    root.launchMissing()
+    root.applyDnd()
+    if (root.switchToId) {
+      var next = Util.cloneJson(root.desksState || root.emptyState())
+      next.currentId = root.switchToId
+      var desks = next.desks || []
+      for (var i = 0; i < desks.length; i++) {
+        if (String(desks[i].id) === String(root.switchToId))
+          desks[i].lastUsed = Date.now()
+      }
+      root.desksState = next
+      root.persistDesks()
+    }
+    root.busy = false
+    root.batchPhase = ""
+    root.pendingPark = ""
+    root.pendingRestore = ""
+    root.pendingLaunches = []
+    root.pendingDnd = ""
+    root.switchToId = ""
+    root.dismiss()
+  }
+
+  function refreshStage(cb) {
+    if (clientsProc.running || workspacesProc.running) {
+      root.stageCallback = cb
+      root.stageQueued = true
+      return
+    }
+    root.stageCallback = cb
+    root.clientsJson = ""
+    root.workspacesJson = ""
+    clientsProc.command = ["hyprctl", "-j", "clients"]
+    clientsProc.running = true
+  }
+
+  function failStage() {
+    var cb = root.stageCallback
+    root.stageCallback = null
+    root.stageQueued = false
+    if (typeof cb === "function") cb(false)
+  }
+
+  function finishStage() {
+    var stage = null
+    if (typeof Model.parseStage === "function") {
+      try { stage = Model.parseStage(root.clientsJson, root.workspacesJson) } catch (e) { stage = null }
+      if (!stage) {
+        root.failStage()
+        return
+      }
+    } else {
+      try {
+        var clients = JSON.parse(root.clientsJson || "[]")
+        var workspaces = JSON.parse(root.workspacesJson || "[]")
+        if (!Array.isArray(clients) || !Array.isArray(workspaces)) {
+          root.failStage()
+          return
+        }
+        stage = { clients: clients, workspaces: workspaces }
+      } catch (e) {
+        root.failStage()
+        return
+      }
+    }
+    root.stage = stage
+    var cb = root.stageCallback
+    root.stageCallback = null
+    if (root.stageQueued) {
+      root.stageQueued = false
+      root.refreshStage(cb)
+      return
+    }
+    if (typeof cb === "function") cb(true)
+  }
+
+  function handlePickerKey(event) {
+    if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+      root.activateHighlighted()
+      event.accepted = true
+    } else if (event.key === Qt.Key_Delete) {
+      root.openForget()
+      event.accepted = true
+    } else if (event.key === Qt.Key_Backspace && !root.filterText) {
+      root.openForget()
+      event.accepted = true
+    } else if (Util.editsFilter(event, root.filterText)) {
+      root.setFilter(Util.editedFilter(event, root.filterText))
+      event.accepted = true
+    } else if (event.key === Qt.Key_Down) {
+      root.moveCursor(0, 1)
+      event.accepted = true
+    } else if (event.key === Qt.Key_Up) {
+      root.moveCursor(0, -1)
+      event.accepted = true
+    } else if (event.key === Qt.Key_Left) {
+      root.moveCursor(-1, 0)
+      event.accepted = true
+    } else if (event.key === Qt.Key_Right) {
+      root.moveCursor(1, 0)
+      event.accepted = true
+    } else if (event.key >= Qt.Key_1 && event.key <= Qt.Key_9 && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))) {
+      root.jumpCursor(event.key - Qt.Key_0)
+      event.accepted = true
+    } else if (event.text === "j") {
+      root.moveCursor(0, 1)
+      event.accepted = true
+    } else if (event.text === "k") {
+      root.moveCursor(0, -1)
+      event.accepted = true
+    } else if (event.text === "h") {
+      root.moveCursor(-1, 0)
+      event.accepted = true
+    } else if (event.text === "l") {
+      root.moveCursor(1, 0)
+      event.accepted = true
+    } else if (!root.filterText && event.text === "n") {
+      root.openSave()
+      event.accepted = true
+    } else if (!root.filterText && event.text === "s") {
+      root.updateHere()
+      event.accepted = true
+    } else if (!root.filterText && event.text === "r") {
+      root.openRename()
+      event.accepted = true
+    } else if (!root.filterText && event.text === "e") {
+      root.openExtras()
+      event.accepted = true
+    } else if (event.text && event.text.length === 1 && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127) {
+      if (root.pickerEmpty) return
+      if (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) return
+      root.setFilter(root.filterText + event.text)
+      event.accepted = true
+    }
+  }
+
+  function handleForgetKey(event) {
+    if (event.key === Qt.Key_Left || event.key === Qt.Key_Right || event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab || event.text === "h" || event.text === "l") {
+      root.forgetIndex = root.forgetIndex === 0 ? 1 : 0
+      event.accepted = true
+    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+      if (root.forgetIndex === 1) root.confirmForget()
+      else root.cancelDialog()
+      event.accepted = true
+    }
+  }
+
+  function handleExtrasKey(event) {
+    if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+      root.confirmExtras()
+      event.accepted = true
+    }
+  }
+
   IpcHandler {
     target: "modoterra.omadesk"
     function open(): void { root.open("{}") }
@@ -54,6 +996,193 @@ Item {
     function show(): void { root.open("{}") }
     function hide(): void { root.dismiss() }
     function toggle(): void { root.toggle() }
+  }
+
+  FileView {
+    id: desksFile
+    path: root.desksPath
+    watchChanges: true
+    atomicWrites: true
+    printErrors: false
+    onLoaded: {
+      root.desksDirReady = true
+      root.applyDesksRaw(text())
+    }
+    onLoadFailed: root.applyDesksRaw("")
+    onFileChanged: reload()
+  }
+
+  Process {
+    id: mkdirProc
+    onExited: function(code) {
+      if (code === 0) root.desksDirReady = true
+      if (root.pendingWrite !== "") {
+        var raw = root.pendingWrite
+        root.pendingWrite = ""
+        if (code === 0) desksFile.setText(raw)
+      }
+    }
+  }
+
+  Process {
+    id: clientsProc
+    stdout: StdioCollector {
+      id: clientsOut
+      waitForEnd: true
+    }
+    onExited: function(code) {
+      if (code !== 0) {
+        root.failStage()
+        return
+      }
+      root.clientsJson = clientsOut.text || ""
+      workspacesProc.command = ["hyprctl", "-j", "workspaces"]
+      workspacesProc.running = true
+    }
+  }
+
+  Process {
+    id: workspacesProc
+    stdout: StdioCollector {
+      id: workspacesOut
+      waitForEnd: true
+    }
+    onExited: function(code) {
+      if (code !== 0) {
+        root.failStage()
+        return
+      }
+      root.workspacesJson = workspacesOut.text || ""
+      root.finishStage()
+    }
+  }
+
+  Process {
+    id: batchProc
+    onExited: function(code) {
+      root.onBatchExited(code, root.batchPhase)
+    }
+  }
+
+  Process {
+    id: focusProc
+    onExited: function(code) {
+      if (code !== 0) {
+        root.busy = false
+        return
+      }
+      root.finishSwitch()
+    }
+  }
+
+  Process {
+    id: dndProc
+  }
+
+  component ChromeButton: Rectangle {
+    id: btn
+    property string label: ""
+    property bool primary: false
+    property bool danger: false
+    property bool hot: false
+    signal clicked()
+
+    color: primary || hot ? root.fillSelected : root.fill
+    border.width: 1
+    border.color: danger ? Util.alpha(root.urgent, 0.45)
+      : (primary || hot ? Util.alpha(root.foreground, 0.55) : root.border)
+    implicitWidth: labelText.implicitWidth + Style.space(24)
+    implicitHeight: labelText.implicitHeight + Style.space(14)
+
+    Text {
+      id: labelText
+      anchors.centerIn: parent
+      text: btn.label
+      color: btn.danger ? root.urgent : root.foreground
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.subtitle
+    }
+
+    MouseArea {
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onClicked: btn.clicked()
+    }
+  }
+
+  component ChoiceChip: Rectangle {
+    id: chip
+    property string label: ""
+    property bool on: false
+    property bool enabledChip: true
+    signal clicked()
+
+    color: chip.on ? root.fillSelected : "transparent"
+    border.width: 1
+    border.color: chip.on ? Util.alpha(root.foreground, 0.45) : root.borderSoft
+    opacity: chip.enabledChip ? 1 : 0.45
+    implicitWidth: chipLabel.implicitWidth + Style.space(16)
+    implicitHeight: chipLabel.implicitHeight + Style.space(6)
+
+    Text {
+      id: chipLabel
+      anchors.centerIn: parent
+      text: chip.label
+      color: chip.on ? root.foreground : root.muted
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.body
+    }
+
+    MouseArea {
+      anchors.fill: parent
+      enabled: chip.enabledChip
+      hoverEnabled: true
+      cursorShape: chip.enabledChip ? Qt.PointingHandCursor : Qt.ArrowCursor
+      onClicked: chip.clicked()
+    }
+  }
+
+  component WorkspaceTile: Rectangle {
+    id: tile
+    property var tileData: ({})
+    property bool compact: false
+
+    readonly property bool vacant: !!(tile.tileData && tile.tileData.vacant)
+    readonly property string tileId: tile.tileData && tile.tileData.id !== undefined ? String(tile.tileData.id) : ""
+    readonly property string tileLabel: tile.tileData ? String(tile.tileData.label || (tile.vacant ? "empty" : "")) : ""
+
+    color: tile.vacant ? "transparent" : root.tileFill
+    border.width: 1
+    border.color: tile.vacant ? root.borderSoft : Util.alpha(root.foreground, 0.12)
+    implicitHeight: Style.space(54)
+    implicitWidth: Style.space(80)
+
+    Column {
+      anchors.fill: parent
+      anchors.margins: Style.space(6)
+      spacing: Style.space(2)
+
+      Text {
+        width: parent.width
+        text: tile.tileId
+        color: root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        font.weight: Font.Medium
+      }
+
+      Text {
+        width: parent.width
+        text: tile.tileLabel
+        color: tile.vacant ? root.muted : Util.alpha(root.foreground, 0.78)
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        wrapMode: Text.WordWrap
+        maximumLineCount: 2
+        elide: Text.ElideRight
+      }
+    }
   }
 
   PanelWindow {
@@ -79,7 +1208,10 @@ Item {
     BorderSurface {
       id: card
       width: root.cardWidth
-      implicitHeight: contentColumn.implicitHeight + card.contentTopInset + card.contentBottomInset + root.contentMargin * 2
+      implicitHeight: Math.min(
+        contentColumn.implicitHeight + card.contentTopInset + card.contentBottomInset,
+        Math.max(Style.space(200), panel.height - Math.max(Style.space(80), panel.height * 0.12) - Style.gapsOut * 2)
+      )
       radius: root.cornerRadius
       anchors.horizontalCenter: parent.horizontalCenter
       anchors.top: parent.top
@@ -97,9 +1229,33 @@ Item {
         Keys.priority: Keys.BeforeItem
         Keys.onPressed: function(event) {
           if (event.key === Qt.Key_Escape) {
-            root.dismiss()
+            root.applyEscape()
             event.accepted = true
+            return
           }
+          if (nameInput && nameInput.activeFocus) {
+            if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+              root.confirmName()
+              event.accepted = true
+            }
+            return
+          }
+          if (root.mode === "forget") {
+            root.handleForgetKey(event)
+            return
+          }
+          if (root.mode === "extras") {
+            root.handleExtrasKey(event)
+            return
+          }
+          if (root.mode === "save" || root.mode === "rename") {
+            if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+              root.confirmName()
+              event.accepted = true
+            }
+            return
+          }
+          root.handlePickerKey(event)
         }
       }
 
@@ -111,14 +1267,530 @@ Item {
         anchors.topMargin: card.contentTopInset
         anchors.leftMargin: card.contentLeftInset
         anchors.rightMargin: card.contentRightInset
-        spacing: Style.spacing.md
+        spacing: Style.space(8)
 
-        Text {
+        Item {
           width: parent.width
-          text: "Desks"
-          color: root.foreground
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.heading
+          height: root.headerHeight
+
+          Text {
+            id: titleText
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            text: root.mode === "save" ? "Save this room"
+              : (root.mode === "rename" ? "Rename"
+              : (root.mode === "extras" && root.extrasDesk ? String(root.extrasDesk.name || "")
+              : (root.mode === "forget" && root.forgetDesk ? "Forget " + String(root.forgetDesk.name || "") + "?"
+              : "Desks")))
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.heading
+            font.weight: Font.Medium
+          }
+
+          Text {
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            visible: (root.mode === "picker" && !root.pickerEmpty) || root.mode === "extras"
+            text: root.mode === "extras" ? "desk extras" : (root.filterText || "type to filter")
+            color: root.muted
+            font.family: root.fontFamily
+            font.pixelSize: root.mode === "extras" ? Style.font.caption : (root.filterText ? Style.font.heading : Style.font.bodySmall)
+          }
+        }
+
+        Column {
+          width: parent.width
+          visible: root.pickerEmpty
+          spacing: Style.space(18)
+          topPadding: Style.space(20)
+          bottomPadding: Style.space(8)
+
+          Text {
+            width: parent.width
+            text: "Arrange the windows you want in this room, then save it."
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.title
+            wrapMode: Text.WordWrap
+          }
+
+          Text {
+            width: parent.width
+            text: "A desk is the current 1–10 workspaces, given a name. Switching parks this room and brings the other one back."
+            color: root.muted
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+            wrapMode: Text.WordWrap
+          }
+
+          ChromeButton {
+            label: "Save current as a desk"
+            primary: true
+            onClicked: root.openSave()
+          }
+        }
+
+        Grid {
+          id: deskGrid
+          width: parent.width
+          visible: root.mode === "picker" && !root.pickerEmpty
+          columns: 2
+          columnSpacing: root.gridGap
+          rowSpacing: root.gridGap
+
+          Repeater {
+            model: deskGrid.visible ? root.cards : []
+
+            delegate: Rectangle {
+              required property int index
+              required property var modelData
+
+              readonly property var card: modelData || ({})
+              readonly property bool isNew: card.kind === "new"
+              readonly property bool hasCursor: index === root.cursorIndex
+              readonly property bool isHere: !!card.here
+
+              width: root.cellWidth
+              implicitHeight: Style.space(148)
+              color: isNew ? (hasCursor ? root.fillHover : "transparent") : (isHere ? root.fillSelected : (hasCursor ? root.fillHover : root.fill))
+              border.width: 1
+              border.color: hasCursor ? Util.alpha(root.foreground, 0.55) : root.borderSoft
+
+              Column {
+                visible: !isNew
+                anchors.fill: parent
+                anchors.margins: Style.space(12)
+                spacing: Style.space(10)
+
+                Item {
+                  width: parent.width
+                  height: nameLabel.implicitHeight
+
+                  Text {
+                    id: nameLabel
+                    anchors.left: parent.left
+                    anchors.right: pill.left
+                    anchors.rightMargin: Style.space(8)
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: String(card.name || "")
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.title
+                    font.weight: Font.DemiBold
+                    elide: Text.ElideRight
+                  }
+
+                  Rectangle {
+                    id: pill
+                    visible: !!(card.here || card.dnd)
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    color: "transparent"
+                    border.width: 1
+                    border.color: card.here ? Util.alpha(root.accent, 0.55) : Util.alpha(root.urgent, 0.5)
+                    implicitWidth: pillText.implicitWidth + Style.space(12)
+                    implicitHeight: pillText.implicitHeight + Style.space(2)
+                    width: visible ? implicitWidth : 0
+
+                    Text {
+                      id: pillText
+                      anchors.centerIn: parent
+                      text: card.here ? "here" : "dnd"
+                      color: card.here ? root.accent : root.urgent
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                    }
+                  }
+                }
+
+                Row {
+                  width: parent.width
+                  spacing: Style.space(6)
+
+                  Repeater {
+                    model: card.tiles || []
+                    delegate: WorkspaceTile {
+                      width: Math.floor((parent.width - Style.space(12)) / 3)
+                      tileData: modelData
+                    }
+                  }
+                }
+
+                Text {
+                  width: parent.width
+                  text: String(card.meta || "")
+                  color: root.muted
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                  elide: Text.ElideRight
+                }
+              }
+
+              Column {
+                visible: isNew
+                anchors.fill: parent
+                anchors.margins: Style.space(12)
+                spacing: Style.space(10)
+
+                Text {
+                  text: String(card.name || "+ new desk")
+                  color: root.muted
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.title
+                  font.weight: Font.DemiBold
+                }
+
+                Text {
+                  text: String(card.meta || "n saves what is on screen")
+                  color: root.muted
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                }
+              }
+
+              MouseArea {
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onContainsMouseChanged: if (containsMouse) root.cursorIndex = index
+                onClicked: {
+                  root.cursorIndex = index
+                  root.activateHighlighted()
+                }
+              }
+            }
+          }
+        }
+
+        Column {
+          width: parent.width
+          visible: root.mode === "save" || root.mode === "rename"
+          spacing: Style.space(14)
+
+          Column {
+            width: parent.width
+            spacing: Style.space(6)
+
+            Text {
+              text: "Name"
+              color: root.muted
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            Rectangle {
+              width: parent.width
+              implicitHeight: Math.max(Style.space(36), nameInput.implicitHeight + Style.space(16))
+              color: root.tileFill
+              border.width: 1
+              border.color: Util.alpha(root.foreground, 0.45)
+
+              TextInput {
+                id: nameInput
+                anchors.fill: parent
+                anchors.leftMargin: Style.space(10)
+                anchors.rightMargin: Style.space(10)
+                verticalAlignment: TextInput.AlignVCenter
+                color: root.foreground
+                selectionColor: Util.alpha(root.accent, 0.35)
+                selectedTextColor: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.heading
+                clip: true
+                cursorVisible: activeFocus
+                cursorDelegate: Rectangle {
+                  width: 2
+                  color: root.accent
+                }
+                Keys.onPressed: function(event) {
+                  if (event.key === Qt.Key_Escape) {
+                    root.cancelDialog()
+                    event.accepted = true
+                  } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                    root.confirmName()
+                    event.accepted = true
+                  }
+                }
+              }
+            }
+          }
+
+          Column {
+            width: parent.width
+            visible: root.mode === "save"
+            spacing: Style.space(6)
+
+            Text {
+              text: "What will be stored"
+              color: root.muted
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            Grid {
+              width: parent.width
+              columns: 3
+              columnSpacing: Style.space(6)
+              rowSpacing: Style.space(6)
+
+              Repeater {
+                model: root.mode === "save" ? root.tilesFrom(root.stage, 10) : []
+                delegate: WorkspaceTile {
+                  width: Math.floor((parent.width - Style.space(12)) / 3)
+                  tileData: modelData
+                }
+              }
+            }
+          }
+
+          Row {
+            spacing: Style.space(8)
+
+            ChromeButton {
+              label: root.mode === "rename" ? "Rename desk" : "Save desk"
+              primary: true
+              onClicked: root.confirmName()
+            }
+
+            ChromeButton {
+              label: "Cancel"
+              onClicked: root.cancelDialog()
+            }
+          }
+        }
+
+        Column {
+          width: parent.width
+          visible: root.mode === "extras"
+          spacing: Style.space(14)
+
+          Item {
+            width: parent.width
+            implicitHeight: Math.max(dndLabel.implicitHeight, dndRow.implicitHeight)
+
+            Text {
+              id: dndLabel
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              text: "Do not disturb"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.subtitle
+            }
+
+            Row {
+              id: dndRow
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(6)
+
+              ChoiceChip {
+                label: "leave"
+                on: root.extrasDraft.dnd === "leave"
+                onClicked: root.extrasDraft = ({ dnd: "leave", theme: "leave", launchMissing: root.extrasDraft.launchMissing })
+              }
+              ChoiceChip {
+                label: "on"
+                on: root.extrasDraft.dnd === "on"
+                onClicked: root.extrasDraft = ({ dnd: "on", theme: "leave", launchMissing: root.extrasDraft.launchMissing })
+              }
+              ChoiceChip {
+                label: "off"
+                on: root.extrasDraft.dnd === "off"
+                onClicked: root.extrasDraft = ({ dnd: "off", theme: "leave", launchMissing: root.extrasDraft.launchMissing })
+              }
+            }
+          }
+
+          Item {
+            width: parent.width
+            implicitHeight: Math.max(themeLabel.implicitHeight, themeRow.implicitHeight)
+
+            Text {
+              id: themeLabel
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              text: "Theme"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.subtitle
+            }
+
+            Row {
+              id: themeRow
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(6)
+
+              ChoiceChip {
+                label: "leave"
+                on: true
+              }
+              // Theme-on-switch is out of v1 (leave only).
+              ChoiceChip {
+                label: "set…"
+                on: false
+                enabledChip: false
+              }
+            }
+          }
+
+          Item {
+            width: parent.width
+            implicitHeight: Math.max(launchLabel.implicitHeight, launchRow.implicitHeight)
+
+            Text {
+              id: launchLabel
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              text: "Launch missing windows"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.subtitle
+            }
+
+            Row {
+              id: launchRow
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(6)
+
+              ChoiceChip {
+                label: "yes"
+                on: root.extrasDraft.launchMissing === true
+                onClicked: root.extrasDraft = ({ dnd: root.extrasDraft.dnd, theme: "leave", launchMissing: true })
+              }
+              ChoiceChip {
+                label: "no"
+                on: root.extrasDraft.launchMissing === false
+                onClicked: root.extrasDraft = ({ dnd: root.extrasDraft.dnd, theme: "leave", launchMissing: false })
+              }
+            }
+          }
+
+          Text {
+            width: parent.width
+            text: "Leave means a switch does not touch that setting. Theme changes flash the whole desktop, so they stay off unless you ask."
+            color: root.muted
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+            wrapMode: Text.WordWrap
+          }
+
+          ChromeButton {
+            label: "Done"
+            primary: true
+            onClicked: root.confirmExtras()
+          }
+        }
+
+        Column {
+          width: parent.width
+          visible: root.mode === "forget"
+          spacing: Style.space(18)
+          topPadding: Style.space(4)
+
+          Text {
+            width: parent.width
+            text: "The recipe is deleted. Windows that are still open stay where they are, including anything parked for " + String((root.forgetDesk && root.forgetDesk.name) || "this desk") + "."
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.title
+            wrapMode: Text.WordWrap
+          }
+
+          Text {
+            width: parent.width
+            text: "Nothing is killed."
+            color: root.muted
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+          }
+
+          Row {
+            spacing: Style.space(8)
+
+            ChromeButton {
+              label: "Cancel"
+              hot: root.forgetIndex === 0
+              onClicked: root.cancelDialog()
+            }
+
+            ChromeButton {
+              label: "Forget desk"
+              danger: true
+              hot: root.forgetIndex === 1
+              onClicked: root.confirmForget()
+            }
+          }
+        }
+
+        Item {
+          width: parent.width
+          visible: root.mode === "picker" || root.mode === "save" || root.mode === "rename"
+          implicitHeight: Style.space(22)
+
+          Row {
+            visible: root.mode === "picker" && root.pickerEmpty
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 0
+            Text { text: "n"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+            Text { text: " save current"; color: root.muted; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+          }
+
+          Row {
+            visible: root.mode === "picker" && root.pickerEmpty
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 0
+            Text { text: "esc"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+            Text { text: " close"; color: root.muted; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+          }
+
+          Row {
+            visible: root.mode === "picker" && !root.pickerEmpty
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 0
+            Text { text: "enter"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+            Text { text: " switch · "; color: root.muted; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+            Text { text: "s"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+            Text { text: " update here · "; color: root.muted; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+            Text { text: "n"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+            Text { text: " new"; color: root.muted; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+          }
+
+          Row {
+            visible: root.mode === "picker" && !root.pickerEmpty
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 0
+            Text { text: "r"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+            Text { text: " rename · "; color: root.muted; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+            Text { text: "del"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+            Text { text: " forget"; color: root.muted; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+          }
+
+          Text {
+            visible: root.mode === "save" || root.mode === "rename"
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Scratchpad stays global and is not stored."
+            color: root.muted
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+          }
+
+          Row {
+            visible: root.mode === "save" || root.mode === "rename"
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 0
+            Text { text: "enter"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+            Text { text: root.mode === "rename" ? " rename" : " save"; color: root.muted; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+          }
         }
       }
     }
