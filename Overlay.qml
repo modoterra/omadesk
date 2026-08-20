@@ -1046,7 +1046,7 @@ Item {
     if (root.leavingForFresh || root.restoringUnsaved) {
       var fresh = null
       if (typeof Model.leaveDesk === "function") {
-        try { fresh = Model.leaveDesk(root.desksState) } catch (e) { fresh = null }
+        try { fresh = Model.leaveDesk(root.desksState, Date.now()) } catch (e) { fresh = null }
       }
       if (!fresh) {
         fresh = Util.cloneJson(root.desksState || root.emptyState())
@@ -1055,12 +1055,18 @@ Item {
       root.desksState = fresh
       root.persistDesks()
     } else if (root.switchToId) {
-      var next = Util.cloneJson(root.desksState || root.emptyState())
-      next.currentId = root.switchToId
-      var desks = next.desks || []
-      for (var i = 0; i < desks.length; i++) {
-        if (String(desks[i].id) === String(root.switchToId))
-          desks[i].lastUsed = Date.now()
+      var next = null
+      if (typeof Model.useDesk === "function") {
+        try { next = Model.useDesk(root.desksState, root.switchToId, Date.now()) } catch (e) { next = null }
+      }
+      if (!next) {
+        next = Util.cloneJson(root.desksState || root.emptyState())
+        next.currentId = root.switchToId
+        var desks = next.desks || []
+        for (var i = 0; i < desks.length; i++) {
+          if (String(desks[i].id) === String(root.switchToId))
+            desks[i].lastUsed = Date.now()
+        }
       }
       root.desksState = next
       root.persistDesks()

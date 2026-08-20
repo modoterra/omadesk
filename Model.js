@@ -469,9 +469,22 @@ function freshPlan(stage, fromSlug) {
   }
 }
 
-function leaveDesk(state) {
+function leaveDesk(state, nowMs) {
   var next = normalizeState(state)
+  if (next.currentId) stampLastUsed(next, next.currentId, parseNow(nowMs))
   next.currentId = null
+  return next
+}
+
+function useDesk(state, deskId, nowMs) {
+  var next = normalizeState(state)
+  var now = parseNow(nowMs)
+  var to = deskId == null || deskId === "" ? null : String(deskId)
+  if (next.currentId && to && String(next.currentId) !== to) {
+    stampLastUsed(next, next.currentId, now)
+  }
+  if (to) stampLastUsed(next, to, now)
+  next.currentId = to
   return next
 }
 
@@ -646,7 +659,7 @@ function parseThemeList(text) {
   return out
 }
 
-function pickerCards(state, query, stage) {
+function pickerCards(state, query, stage, nowMs) {
   var st = state || emptyState()
   var q = normalizeQuery(query)
   var desks = filterDesks(st.desks || [], q)
@@ -656,14 +669,15 @@ function pickerCards(state, query, stage) {
   if (unsaved) cards.push(unsaved)
   for (i = 0; i < desks.length; i++) {
     var desk = desks[i]
+    var here = st.currentId != null && desk.id === st.currentId
     cards.push({
       kind: "desk",
       id: desk.id,
       name: desk.name,
-      here: st.currentId != null && desk.id === st.currentId,
+      here: here,
       dnd: !!(desk.extras && desk.extras.dnd === "on"),
       tiles: deskTiles(desk),
-      meta: deskSpaceMeta(desk) + formatDeskMeta(desk),
+      meta: deskSpaceMeta(desk) + formatDeskMeta(desk, nowMs, here),
       desk: desk
     })
   }
@@ -736,16 +750,20 @@ function deskSpaceMeta(desk) {
   return used + " space" + (used === 1 ? "" : "s") + " · last used "
 }
 
-function formatDeskMeta(desk, nowMs) {
-  var stamp = desk && desk.updatedAt
-  var then
-  if (stamp) then = Date.parse(stamp)
-  if ((!isFinite(then) || stamp == null || stamp === "") && desk && desk.lastUsed != null) {
-    then = Number(desk.lastUsed)
-  }
+function deskLastUsedMs(desk) {
+  var used = desk && desk.lastUsed != null && desk.lastUsed !== "" ? Number(desk.lastUsed) : NaN
+  var updated = desk && desk.updatedAt ? Date.parse(desk.updatedAt) : NaN
+  if (isFinite(used) && isFinite(updated)) return used >= updated ? used : updated
+  if (isFinite(used)) return used
+  if (isFinite(updated)) return updated
+  return NaN
+}
+
+function formatDeskMeta(desk, nowMs, here) {
+  if (here) return "now"
+  var then = deskLastUsedMs(desk)
   if (!isFinite(then)) return ""
-  var now = nowMs == null || nowMs === "" ? Date.now() : Number(nowMs)
-  if (!isFinite(now)) now = Date.now()
+  var now = parseNow(nowMs)
   var delta = now - then
   if (delta < 0) delta = 0
   if (delta < 60000) return "now"
@@ -972,8 +990,15 @@ function normalizeDesk(desk) {
   else last = Number(last)
   var updatedAt = desk.updatedAt ? String(desk.updatedAt) : ""
   var lastUsed = desk.lastUsed
-  if (!updatedAt && lastUsed != null && isFinite(Number(lastUsed))) {
-    updatedAt = new Date(Number(lastUsed)).toISOString()
+  if (lastUsed == null || lastUsed === "") lastUsed = null
+  else lastUsed = Number(lastUsed)
+  if (!isFinite(lastUsed)) lastUsed = null
+  if (lastUsed == null && updatedAt) {
+    var fromUpdated = Date.parse(updatedAt)
+    if (isFinite(fromUpdated)) lastUsed = fromUpdated
+  }
+  if (!updatedAt && lastUsed != null) {
+    updatedAt = new Date(lastUsed).toISOString()
   }
   var out = {
     id: String(desk.id || slugify(desk.name || "unnamed")),
@@ -1304,6 +1329,24 @@ function isoNow() {
     return new Date().toISOString()
   } catch (err) {
     return ""
+  }
+}
+
+function parseNow(nowMs) {
+  if (nowMs == null || nowMs === "") return Date.now()
+  var n = Number(nowMs)
+  if (isFinite(n)) return n
+  return Date.now()
+}
+
+function stampLastUsed(state, deskId, nowMs) {
+  if (!state || !isArray(state.desks) || deskId == null || deskId === "") return
+  var now = parseNow(nowMs)
+  var i
+  for (i = 0; i < state.desks.length; i++) {
+    if (String(state.desks[i].id) !== String(deskId)) continue
+    state.desks[i].lastUsed = now
+    return
   }
 }
 

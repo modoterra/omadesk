@@ -557,5 +557,44 @@ test("24 broader exec guesses and gtk-launch desktop ids", function() {
   assert.strictEqual(model.prettyApp({ class: "dev.zed.Zed" }), "Zed")
 })
 
-assert.strictEqual(tests, 26)
+test("25 last used follows switch, not last save; here is now", function() {
+  const saved = Date.parse("2026-08-20T21:58:28.528Z")
+  const used = Date.parse("2026-08-20T22:23:29.759Z")
+  const now = Date.parse("2026-08-20T22:24:12.680Z")
+  assert.strictEqual(
+    model.formatDeskMeta({ updatedAt: "2026-08-20T21:58:28.528Z" }, now),
+    "25 minutes ago"
+  )
+  assert.strictEqual(
+    model.formatDeskMeta({ updatedAt: "2026-08-20T21:58:28.528Z", lastUsed: used }, now),
+    "now"
+  )
+  assert.strictEqual(
+    model.formatDeskMeta({ updatedAt: "2026-08-20T21:58:28.528Z", lastUsed: saved }, now),
+    "25 minutes ago"
+  )
+  assert.strictEqual(
+    model.formatDeskMeta({ updatedAt: "2026-08-20T21:58:28.528Z", lastUsed: saved }, now, true),
+    "now"
+  )
+  const demo = model.demoDesks()
+  const cards = model.pickerCards(demo, "")
+  const writing = cards.filter((c) => c.id === "writing")[0]
+  assert.ok(writing.meta.indexOf("last used now") >= 0)
+  const switched = model.useDesk(demo, "call", used)
+  assert.strictEqual(switched.currentId, "call")
+  const call = switched.desks.filter((d) => d.id === "call")[0]
+  const writingAfter = switched.desks.filter((d) => d.id === "writing")[0]
+  assert.strictEqual(call.lastUsed, used)
+  assert.strictEqual(writingAfter.lastUsed, used)
+  const later = used + 10 * 60000
+  const afterCards = model.pickerCards(switched, "", null, later)
+  assert.ok(afterCards.filter((c) => c.id === "call")[0].meta.indexOf("last used now") >= 0)
+  assert.ok(afterCards.filter((c) => c.id === "writing")[0].meta.indexOf("10 minutes ago") >= 0)
+  const left = model.leaveDesk(switched, used + 120000)
+  assert.strictEqual(left.currentId, null)
+  assert.strictEqual(left.desks.filter((d) => d.id === "call")[0].lastUsed, used + 120000)
+})
+
+assert.strictEqual(tests, 27)
 console.log("ok")
