@@ -65,6 +65,7 @@ Item {
   readonly property bool dialogOpen: root.mode !== "picker"
   readonly property int deskCount: (root.desksState && root.desksState.desks && root.desksState.desks.length) ? root.desksState.desks.length : 0
   readonly property bool pickerEmpty: root.mode === "picker" && root.deskCount === 0
+  readonly property string mascot: "     ╭───╮\n     │• •│\n     │ ‿ │\n     ╰─┬─╯\n      ╱ ╲\n     ╱___╲"
 
   function pluginId() {
     return (root.manifest && root.manifest.id) || "com.mdtrr.omadesk"
@@ -1358,6 +1359,15 @@ Item {
           spacing: Style.space(18)
           topPadding: Style.space(20)
           bottomPadding: Style.space(8)
+
+          Text {
+            width: parent.width
+            text: root.mascot
+            color: root.muted
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+            font.weight: Font.Medium
+          }
 
           Text {
             width: parent.width

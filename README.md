@@ -1,5 +1,14 @@
 # Desks
 
+```
+     ╭───╮
+     │• •│
+     │ ‿ │
+     ╰─┬─╯
+      ╱ ╲
+     ╱___╲
+```
+
 Named-desk overlay for Omarchy Quattro. A desk is the current 1–10
 workspaces, given a name. Switching parks this room onto named special
 workspaces `special:omadesk-<id>-N` (the same kind of hidden space as
