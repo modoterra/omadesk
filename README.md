@@ -1,10 +1,12 @@
 # Desks
 
 Named-desk overlay for Omarchy Quattro. A desk is the current 1–10
-workspaces, given a name. Switching parks this room onto hidden
-`omadesk-<id>-N` workspaces and brings the other room back onto 1–10.
-The bar still shows 1 2 3. The scratchpad stays global and is never
-parked, restored, or stored.
+workspaces, given a name. Switching parks this room onto named special
+workspaces `special:omadesk-<id>-N` (the same kind of hidden space as
+the scratchpad, so Super+Tab never lands there) and brings the other
+room back onto 1–10. The bar still shows 1 2 3. The scratchpad itself
+(`special:scratchpad`) stays global and is never parked, restored, or
+stored.
 
 ![Desks picker](preview.png)
 

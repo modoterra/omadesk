@@ -74,33 +74,33 @@ test("3 parkPlan lua syntax", function() {
   const first = plan.dispatches[0]
   assert.strictEqual(
     first,
-    'hl.dsp.window.move({ workspace = "name:omadesk-writing-1", follow = false, window = "address:0x55f11fe15110" })'
+    'hl.dsp.window.move({ workspace = "special:omadesk-writing-1", follow = false, window = "address:0x55f11fe15110" })'
   )
   const zed = plan.dispatches.filter((d) => d.indexOf("0x55f11fe15110") >= 0)[0]
   const ghost = plan.dispatches.filter((d) => d.indexOf("0x55f11fe15220") >= 0)[0]
   const chrome = plan.dispatches.filter((d) => d.indexOf("0x55f11fe15330") >= 0)[0]
-  assert.ok(zed.indexOf('workspace = "name:omadesk-writing-1"') >= 0)
-  assert.ok(ghost.indexOf('workspace = "name:omadesk-writing-2"') >= 0)
-  assert.ok(chrome.indexOf('workspace = "name:omadesk-writing-3"') >= 0)
+  assert.ok(zed.indexOf('workspace = "special:omadesk-writing-1"') >= 0)
+  assert.ok(ghost.indexOf('workspace = "special:omadesk-writing-2"') >= 0)
+  assert.ok(chrome.indexOf('workspace = "special:omadesk-writing-3"') >= 0)
   plan.dispatches.forEach((lua) => {
     assert.ok(lua.indexOf("hl.dsp.window.move({") === 0)
     assert.ok(lua.indexOf("follow = false") >= 0)
-    assert.ok(lua.indexOf("name:omadesk-writing-") >= 0)
+    assert.ok(lua.indexOf("special:omadesk-writing-") >= 0)
     assert.ok(lua.indexOf('window = "address:0x') >= 0)
     assert.ok(lua.indexOf("movetoworkspacesilent") === -1)
   })
   assert.ok(plan.batch.indexOf("dispatch ") === 0)
   assert.ok(plan.batch.indexOf("; dispatch ") >= 0)
   assert.strictEqual(
-    model.moveDispatch("name:omadesk-writing-1", "0xABC"),
-    'hl.dsp.window.move({ workspace = "name:omadesk-writing-1", follow = false, window = "address:0xABC" })'
+    model.moveDispatch("special:omadesk-writing-1", "0xABC"),
+    'hl.dsp.window.move({ workspace = "special:omadesk-writing-1", follow = false, window = "address:0xABC" })'
   )
   assert.strictEqual(
     model.focusDispatch("3"),
     'hl.dsp.focus({ workspace = "3" })'
   )
   assert.strictEqual(model.parkLotName("writing", 1), "omadesk-writing-1")
-  assert.strictEqual(model.parkSelector("writing", 1), "name:omadesk-writing-1")
+  assert.strictEqual(model.parkSelector("writing", 1), "special:omadesk-writing-1")
 })
 
 test("4 empty stage empty park plan", function() {
@@ -251,15 +251,15 @@ test("11 switchPlan sequential park then restore", function() {
   assert.ok(keys.indexOf("restore") >= 0)
   assert.ok(keys.indexOf("park") < keys.indexOf("restore"))
   plan.park.dispatches.forEach((lua) => {
-    assert.ok(lua.indexOf("name:omadesk-writing-") >= 0)
+    assert.ok(lua.indexOf("special:omadesk-writing-") >= 0)
   })
   plan.restore.dispatches.forEach((lua) => {
-    assert.ok(lua.indexOf("name:omadesk-") === -1)
+    assert.ok(lua.indexOf("omadesk-") === -1)
     assert.ok(/workspace = "[12]"/.test(lua))
   })
   const unnamed = model.switchPlan(stage, clientsText, "unnamed", "call")
   unnamed.park.dispatches.forEach((lua) => {
-    assert.ok(lua.indexOf("name:omadesk-unnamed-") >= 0)
+    assert.ok(lua.indexOf("special:omadesk-unnamed-") >= 0)
   })
 })
 
@@ -270,7 +270,7 @@ test("11b freshPlan parks current and restores nothing", function() {
   assert.strictEqual(plan.sequential, true)
   assert.ok(plan.park.dispatches.length >= 3)
   plan.park.dispatches.forEach((lua) => {
-    assert.ok(lua.indexOf("name:omadesk-writing-") >= 0)
+    assert.ok(lua.indexOf("special:omadesk-writing-") >= 0)
   })
   same(plan.restore.dispatches, [])
   assert.strictEqual(plan.restore.batch, "")

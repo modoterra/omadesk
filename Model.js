@@ -1,6 +1,7 @@
 // Pure functions for desks. Loaded by Overlay.qml and by Node vm tests.
 // No Node APIs. No QML types.
-// Scratchpad (special:*) is global: never stage, park/restore, or desks.json.
+// Scratchpad (special:scratchpad) is global: never stage, park, restore, or store.
+// Desk lots live on other named specials: special:omadesk-<slug>-N.
 // Two Chromiums after reboot are best-effort; guessExec uses --new-window.
 
 function emptyState() {
@@ -171,7 +172,7 @@ function parkLotName(slug, n) {
 }
 
 function parkSelector(slug, n) {
-  return "name:" + parkLotName(slug, n)
+  return "special:" + parkLotName(slug, n)
 }
 
 function moveDispatch(workspaceSelector, address) {
@@ -221,7 +222,7 @@ function restoreFromPark(park) {
   var i
   for (i = 0; i < list.length; i++) {
     var lua = String(list[i] || "")
-    var ws = /workspace = "name:omadesk-[^"]+-([0-9]+)"/.exec(lua)
+    var ws = /workspace = "(?:special:)?(?:name:)?omadesk-[^"]+-([0-9]+)"/.exec(lua)
     var addr = /window = "(address:[^"]+|0x[^"]+)"/.exec(lua)
     if (!ws || !addr) continue
     dispatches.push(moveDispatch(ws[1], addr[1]))
@@ -682,6 +683,17 @@ function workspaceBareName(name) {
   return nm
 }
 
+function parkingLotBareName(name) {
+  var nm = workspaceBareName(name)
+  if (nm.indexOf("special:") === 0) nm = nm.slice(8)
+  return nm
+}
+
+function isScratchpadName(name) {
+  var nm = parkingLotBareName(name)
+  return nm === "scratchpad" || nm === "special"
+}
+
 function isDroppedName(name) {
   var nm = workspaceBareName(name)
   if (nm.indexOf("special:") === 0) return true
@@ -785,7 +797,7 @@ function stageWindows(stage) {
 }
 
 function lotNumberFromName(name, slug) {
-  var nm = workspaceBareName(name)
+  var nm = parkingLotBareName(name)
   var prefix = "omadesk-" + slug + "-"
   if (nm.indexOf(prefix) !== 0) return 0
   var rest = nm.slice(prefix.length)
@@ -1051,8 +1063,8 @@ function packRead(ok, state, error) {
 
 function parseParkedLot(client) {
   var name = workspaceBareName(client && client.workspace && client.workspace.name)
-  if (name.indexOf("special:") === 0 || name === "special") return null
-  var match = /^omadesk-(.+)-([0-9]+)$/.exec(name)
+  if (isScratchpadName(name)) return null
+  var match = /^omadesk-(.+)-([0-9]+)$/.exec(parkingLotBareName(name))
   if (!match) return null
   var n = parseInt(match[2], 10)
   if (n < 1 || n > 10) return null
@@ -1076,7 +1088,7 @@ function parkedAsClients(parked) {
       n: p.n,
       workspace: {
         id: p.n,
-        name: "omadesk-" + String(p.slug || "") + "-" + String(p.n)
+        name: "special:omadesk-" + String(p.slug || "") + "-" + String(p.n)
       }
     })
   }
@@ -1098,7 +1110,7 @@ function parkedClientLot(client, slug) {
     if (n >= 1 && n <= 10) return n
   }
   var name = workspaceBareName(client && client.workspace && client.workspace.name)
-  if (name.indexOf("special:") === 0 || name === "special") return 0
+  if (isScratchpadName(name)) return 0
   return lotNumberFromName(name, slug)
 }
 

@@ -95,7 +95,7 @@
     "hidden": false,
     "at": [0, 0],
     "size": [980, 900],
-    "workspace": { "id": 12, "name": "omadesk-call-1" },
+    "workspace": { "id": -83, "name": "special:omadesk-call-1" },
     "floating": false,
     "monitor": 0,
     "class": "chromium",
