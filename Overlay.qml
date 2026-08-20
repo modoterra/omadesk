@@ -1413,6 +1413,7 @@ Item {
     border.color: tile.vacant ? root.borderSoft : Util.alpha(root.foreground, 0.12)
     implicitHeight: Style.space(54)
     implicitWidth: Style.space(80)
+    clip: true
 
     Column {
       anchors.fill: parent
