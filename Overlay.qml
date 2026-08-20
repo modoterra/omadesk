@@ -1435,9 +1435,10 @@ Item {
         color: tile.vacant ? root.muted : Util.alpha(root.foreground, 0.78)
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
-        wrapMode: Text.WordWrap
+        wrapMode: Text.Wrap
         maximumLineCount: 2
         elide: Text.ElideRight
+        clip: true
       }
     }
   }
