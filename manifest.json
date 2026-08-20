@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "modoterra.omadesk",
+  "name": "Desks",
+  "version": "0.1.0",
+  "author": "Christoffer Hallas (Modoterra)",
+  "license": "MIT",
+  "description": "Named-desk overlay for Omarchy. Sixteen workspaces stay 1–10; switching parks a room and brings another back.",
+  "kinds": ["overlay"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "Overlay.qml"
+  }
+}

@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Omadesk mocks</title>
+  <style>
+    :root {
+      --bg: #121212;
+      --fg: #dadada;
+      --muted: #6c6c6c;
+      --accent: #5fafd7;
+      --urgent: #ff5f87;
+      --green: #5fd75f;
+      --fill: rgba(218, 218, 218, 0.04);
+      --fill-hover: rgba(218, 218, 218, 0.08);
+      --fill-selected: rgba(218, 218, 218, 0.18);
+      --border: rgba(218, 218, 218, 0.4);
+      --border-soft: rgba(218, 218, 218, 0.18);
+      --scrim: rgba(0, 0, 0, 0.36);
+      --bar-h: 26px;
+      --mono: "JetBrainsMono Nerd Font", "JetBrains Mono", ui-monospace, monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      font-family: var(--mono);
+      color: var(--fg);
+      background: #090909;
+    }
+
+    .desktop {
+      position: relative;
+      width: 1600px;
+      height: 1000px;
+      overflow: hidden;
+      background:
+        linear-gradient(180deg, rgba(18,18,18,0.08), rgba(18,18,18,0.28)),
+        url("wallpaper.png") center / cover no-repeat;
+    }
+
+    .bar {
+      height: var(--bar-h);
+      background: var(--bg);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 10px;
+      font-size: 13px;
+      letter-spacing: 0.01em;
+      border-bottom: 1px solid rgba(218,218,218,0.08);
+    }
+    .bar-left, .bar-right, .bar-center {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      height: 100%;
+    }
+    .bar-center { color: var(--fg); }
+    .ws { color: var(--muted); }
+    .ws.on { color: var(--fg); }
+    .desk-chip { color: var(--accent); }
+    .desk-chip.quiet { color: var(--muted); }
+    .dnd { color: var(--urgent); }
+    .sep { color: var(--muted); opacity: 0.5; }
+
+    .stage {
+      position: absolute;
+      inset: var(--bar-h) 0 0 0;
+    }
+
+    .window {
+      position: absolute;
+      background: #161616;
+      border: 1px solid rgba(95,175,215,0.55);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .window.dim {
+      border-color: rgba(218,218,218,0.12);
+      filter: brightness(0.72);
+    }
+    .titlebar {
+      height: 28px;
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      font-size: 12px;
+      color: var(--muted);
+      border-bottom: 1px solid rgba(218,218,218,0.08);
+      background: #141414;
+    }
+    .win-body {
+      flex: 1;
+      padding: 18px 20px;
+      color: #a4a4a4;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    .win-body strong { color: var(--fg); font-weight: 500; }
+    .cursor { color: var(--accent); }
+
+    .scrim {
+      position: absolute;
+      inset: 0;
+      background: var(--scrim);
+    }
+
+    .card {
+      position: absolute;
+      left: 50%;
+      top: 118px;
+      transform: translateX(-50%);
+      width: 560px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      padding: 16px 16px 12px;
+    }
+    .card.wide { width: 760px; }
+
+    .head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      height: 34px;
+      padding: 0 4px 10px;
+    }
+    .head h1 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 500;
+    }
+    .head .ghost {
+      color: var(--muted);
+      font-size: 16px;
+    }
+    .hint {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .desk {
+      background: var(--fill);
+      border: 1px solid var(--border-soft);
+      padding: 12px 12px 10px;
+      min-height: 148px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .desk.here { background: var(--fill-selected); }
+    .desk.cursor {
+      background: var(--fill-hover);
+      border-color: rgba(218,218,218,0.55);
+    }
+    .desk.empty-tile {
+      border-style: dashed;
+      color: var(--muted);
+      justify-content: center;
+      align-items: flex-start;
+      min-height: 148px;
+    }
+
+    .desk-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .desk-name { font-size: 14px; font-weight: 600; }
+    .pill {
+      font-size: 10px;
+      color: var(--accent);
+      border: 1px solid rgba(95,175,215,0.55);
+      padding: 1px 6px;
+    }
+    .pill.dnd { color: var(--urgent); border-color: rgba(255,95,135,0.5); }
+    .pill.muted { color: var(--muted); border-color: var(--border-soft); }
+
+    .tiles {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+    }
+    .tile {
+      background: #1b1b1b;
+      border: 1px solid rgba(218,218,218,0.12);
+      min-height: 54px;
+      padding: 6px 7px;
+      font-size: 10px;
+      color: #a4a4a4;
+      line-height: 1.35;
+    }
+    .tile b {
+      display: block;
+      color: var(--fg);
+      font-weight: 500;
+      margin-bottom: 2px;
+    }
+    .tile.vacant {
+      border-style: dashed;
+      color: var(--muted);
+      background: transparent;
+    }
+    .meta { font-size: 11px; color: var(--muted); }
+
+    .empty {
+      padding: 36px 20px 28px;
+      text-align: left;
+    }
+    .empty p {
+      margin: 0 0 18px;
+      font-size: 14px;
+      line-height: 1.5;
+      max-width: 36em;
+    }
+    .empty .sub {
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 22px;
+    }
+    .btn-row { display: flex; gap: 8px; }
+    .btn {
+      border: 1px solid var(--border);
+      background: var(--fill);
+      color: var(--fg);
+      font: inherit;
+      font-size: 13px;
+      padding: 7px 12px;
+    }
+    .btn.primary {
+      background: var(--fill-selected);
+      border-color: rgba(218,218,218,0.55);
+    }
+    .btn.danger {
+      color: var(--urgent);
+      border-color: rgba(255,95,135,0.45);
+    }
+
+    .field-label {
+      font-size: 11px;
+      color: var(--muted);
+      margin: 0 0 6px;
+    }
+    .input {
+      width: 100%;
+      background: #1b1b1b;
+      border: 1px solid rgba(218,218,218,0.45);
+      color: var(--fg);
+      font: inherit;
+      font-size: 16px;
+      padding: 8px 10px;
+      outline: none;
+    }
+    .caret::after {
+      content: "█";
+      color: var(--accent);
+      margin-left: 1px;
+    }
+
+    .preview {
+      margin-top: 14px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+    }
+
+    .form {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      padding: 4px 4px 8px;
+    }
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      font-size: 13px;
+    }
+    .choice {
+      display: flex;
+      gap: 6px;
+    }
+    .choice span {
+      border: 1px solid var(--border-soft);
+      padding: 3px 8px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .choice span.on {
+      color: var(--fg);
+      background: var(--fill-selected);
+      border-color: rgba(218,218,218,0.45);
+    }
+
+    .foot {
+      margin-top: 12px;
+      padding: 6px 4px 2px;
+      color: var(--muted);
+      font-size: 11px;
+      display: flex;
+      justify-content: space-between;
+    }
+    kbd {
+      font: inherit;
+      color: var(--fg);
+    }
+
+    /* mechanic */
+    .lanes {
+      display: grid;
+      grid-template-columns: 1fr 40px 1fr;
+      gap: 8px;
+      align-items: start;
+    }
+    .lane h2 {
+      margin: 0 0 8px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--muted);
+    }
+    .room {
+      border: 1px solid var(--border-soft);
+      background: var(--fill);
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .ws-row {
+      display: grid;
+      grid-template-columns: 28px 1fr;
+      gap: 8px;
+      align-items: center;
+      background: #1b1b1b;
+      border: 1px solid rgba(218,218,218,0.1);
+      padding: 7px 8px;
+      font-size: 12px;
+    }
+    .ws-num { color: var(--muted); }
+    .arrow {
+      align-self: center;
+      text-align: center;
+      color: var(--accent);
+      font-size: 18px;
+      padding-top: 28px;
+    }
+    .note {
+      margin-top: 12px;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    .hidden { display: none !important; }
+    body[data-screen="empty"] #screen-empty,
+    body[data-screen="picker"] #screen-picker,
+    body[data-screen="save"] #screen-save,
+    body[data-screen="edit"] #screen-edit,
+    body[data-screen="delete"] #screen-delete,
+    body[data-screen="mechanic"] #screen-mechanic,
+    body[data-screen="writing"] #screen-writing,
+    body[data-screen="call"] #screen-call { display: block; }
+
+    #screen-empty, #screen-picker, #screen-save,
+    #screen-edit, #screen-delete, #screen-mechanic,
+    #screen-writing, #screen-call { display: none; }
+
+    body[data-screen="mechanic"] .card { top: 96px; }
+    body[data-screen="writing"] .scrim,
+    body[data-screen="call"] .scrim,
+    body[data-screen="writing"] .card,
+    body[data-screen="call"] .card { display: none !important; }
+  </style>
+</head>
+<body>
+  <div class="desktop">
+    <div class="bar" id="bar"></div>
+    <div class="stage" id="stage"></div>
+    <div class="scrim"></div>
+
+    <section class="card" id="screen-empty">
+      <div class="head"><h1>Desks</h1></div>
+      <div class="empty">
+        <p>Arrange the windows you want in this room, then save it.</p>
+        <p class="sub">A desk is the current 1–10 workspaces, given a name. Switching parks this room and brings the other one back.</p>
+        <div class="btn-row">
+          <div class="btn primary">Save current as a desk</div>
+        </div>
+      </div>
+      <div class="foot"><span><kbd>n</kbd> save current</span><span><kbd>esc</kbd> close</span></div>
+    </section>
+
+    <section class="card" id="screen-picker">
+      <div class="head">
+        <h1>Desks</h1>
+        <span class="hint">type to filter</span>
+      </div>
+      <div class="grid">
+        <article class="desk here">
+          <div class="desk-top">
+            <div class="desk-name">Writing</div>
+            <span class="pill">here</span>
+          </div>
+          <div class="tiles">
+            <div class="tile"><b>1</b>Zed · charcana</div>
+            <div class="tile"><b>2</b>Ghostty</div>
+            <div class="tile"><b>3</b>Chromium · draft</div>
+          </div>
+          <div class="meta">3 spaces · last used now</div>
+        </article>
+        <article class="desk cursor">
+          <div class="desk-top">
+            <div class="desk-name">Call</div>
+            <span class="pill dnd">dnd</span>
+          </div>
+          <div class="tiles">
+            <div class="tile"><b>1</b>Chromium · Meet</div>
+            <div class="tile"><b>2</b>Ghostty · notes</div>
+            <div class="tile vacant"><b>3</b>empty</div>
+          </div>
+          <div class="meta">2 spaces · 3 hours ago</div>
+        </article>
+        <article class="desk">
+          <div class="desk-top">
+            <div class="desk-name">Review</div>
+          </div>
+          <div class="tiles">
+            <div class="tile"><b>1</b>Chromium · PRs</div>
+            <div class="tile"><b>2</b>Ghostty · diff</div>
+            <div class="tile vacant"><b>3</b>empty</div>
+          </div>
+          <div class="meta">2 spaces · yesterday</div>
+        </article>
+        <article class="desk empty-tile">
+          <div class="desk-name">+ new desk</div>
+          <div class="meta">n saves what is on screen</div>
+        </article>
+      </div>
+      <div class="foot">
+        <span><kbd>enter</kbd> switch · <kbd>s</kbd> update here · <kbd>n</kbd> new</span>
+        <span><kbd>r</kbd> rename · <kbd>del</kbd> forget</span>
+      </div>
+    </section>
+
+    <section class="card" id="screen-save">
+      <div class="head"><h1>Save this room</h1></div>
+      <div class="form">
+        <div>
+          <p class="field-label">Name</p>
+          <div class="input caret">Writing</div>
+        </div>
+        <div>
+          <p class="field-label">What will be stored</p>
+          <div class="preview">
+            <div class="tile"><b>1</b>Zed · charcana</div>
+            <div class="tile"><b>2</b>Ghostty</div>
+            <div class="tile"><b>3</b>Chromium · draft</div>
+          </div>
+        </div>
+        <div class="btn-row">
+          <div class="btn primary">Save desk</div>
+          <div class="btn">Cancel</div>
+        </div>
+      </div>
+      <div class="foot"><span>Scratchpad stays global and is not stored.</span><span><kbd>enter</kbd> save</span></div>
+    </section>
+
+    <section class="card" id="screen-edit">
+      <div class="head">
+        <h1>Call</h1>
+        <span class="hint">desk extras</span>
+      </div>
+      <div class="form">
+        <div class="row">
+          <span>Do not disturb</span>
+          <div class="choice">
+            <span>leave</span>
+            <span class="on">on</span>
+            <span>off</span>
+          </div>
+        </div>
+        <div class="row">
+          <span>Theme</span>
+          <div class="choice">
+            <span class="on">leave</span>
+            <span>set…</span>
+          </div>
+        </div>
+        <div class="row">
+          <span>Launch missing windows</span>
+          <div class="choice">
+            <span class="on">yes</span>
+            <span>no</span>
+          </div>
+        </div>
+        <p class="note">Leave means a switch does not touch that setting. Theme changes flash the whole desktop, so they stay off unless you ask.</p>
+        <div class="btn-row">
+          <div class="btn primary">Done</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="screen-delete">
+      <div class="head"><h1>Forget Review?</h1></div>
+      <div class="empty" style="padding-top:8px">
+        <p>The recipe is deleted. Windows that are still open stay where they are, including anything parked for Review.</p>
+        <p class="sub">Nothing is killed.</p>
+        <div class="btn-row">
+          <div class="btn">Cancel</div>
+          <div class="btn danger">Forget desk</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card wide" id="screen-mechanic">
+      <div class="head"><h1>Switch Writing → Call</h1></div>
+      <div class="lanes">
+        <div class="lane">
+          <h2>On stage now · numbered 1–3</h2>
+          <div class="room">
+            <div class="ws-row"><span class="ws-num">1</span><span>Zed · charcana</span></div>
+            <div class="ws-row"><span class="ws-num">2</span><span>Ghostty</span></div>
+            <div class="ws-row"><span class="ws-num">3</span><span>Chromium · draft</span></div>
+          </div>
+        </div>
+        <div class="arrow">→</div>
+        <div class="lane">
+          <h2>Parked as omadesk-writing-*</h2>
+          <div class="room">
+            <div class="ws-row"><span class="ws-num">w1</span><span>Zed · charcana</span></div>
+            <div class="ws-row"><span class="ws-num">w2</span><span>Ghostty</span></div>
+            <div class="ws-row"><span class="ws-num">w3</span><span>Chromium · draft</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="lanes" style="margin-top:14px">
+        <div class="lane">
+          <h2>Parked as omadesk-call-*</h2>
+          <div class="room">
+            <div class="ws-row"><span class="ws-num">c1</span><span>Chromium · Meet</span></div>
+            <div class="ws-row"><span class="ws-num">c2</span><span>Ghostty · notes</span></div>
+          </div>
+        </div>
+        <div class="arrow">→</div>
+        <div class="lane">
+          <h2>Then brought back onto 1–3</h2>
+          <div class="room">
+            <div class="ws-row"><span class="ws-num">1</span><span>Chromium · Meet</span></div>
+            <div class="ws-row"><span class="ws-num">2</span><span>Ghostty · notes</span></div>
+            <div class="ws-row"><span class="ws-num">3</span><span style="color:#6c6c6c">empty</span></div>
+          </div>
+        </div>
+      </div>
+      <p class="note">The bar still shows 1 2 3. Scratchpad is not moved. If Meet was closed, the saved launch command opens it on workspace 1.</p>
+    </section>
+  </div>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    const screen = params.get("screen") || "picker";
+    document.body.dataset.screen = screen;
+
+    const bars = {
+      empty:    { ws: [1], desk: "", dnd: false, clock: "Wednesday 16:40" },
+      picker:   { ws: [1,2,3], on: 3, desk: "Writing", dnd: false, clock: "Wednesday 16:40" },
+      save:     { ws: [1,2,3], on: 3, desk: "Writing", dnd: false, clock: "Wednesday 16:40" },
+      edit:     { ws: [1,2,3], on: 3, desk: "Writing", dnd: false, clock: "Wednesday 16:40" },
+      delete:   { ws: [1,2,3], on: 3, desk: "Writing", dnd: false, clock: "Wednesday 16:40" },
+      mechanic: { ws: [1,2,3], on: 3, desk: "Writing", dnd: false, clock: "Wednesday 16:40" },
+      writing:  { ws: [1,2,3], on: 3, desk: "Writing", dnd: false, clock: "Wednesday 16:40" },
+      call:     { ws: [1,2], on: 1, desk: "Call", dnd: true, clock: "Wednesday 16:41" }
+    };
+
+    const stages = {
+      call: [
+        { title: "Chromium — Meet", t: "<strong>Standup</strong><br>meet.google.com/abc-defg-hij<br><br>Waiting for others to join…", x: 18, y: 18, w: 980, h: 938, dim: false },
+        { title: "Ghostty — notes", t: "# standup<br>ask about the invoice<br>share the desk mock", x: 1010, y: 18, w: 572, h: 938, dim: false }
+      ],
+      writing: [
+        { title: "Chromium — draft", t: "<strong>Untitled draft</strong><br><br>A desk is a room you can leave.<br>Windows stay running. You just stop looking at them.", x: 18, y: 18, w: 1564, h: 938, dim: false }
+      ],
+      default: [
+        { title: "Chromium — draft", t: "<strong>Untitled draft</strong><br><br>A desk is a room you can leave.", x: 18, y: 18, w: 1564, h: 938, dim: true }
+      ]
+    };
+
+    function renderBar(s) {
+      const spec = bars[s] || bars.picker;
+      const ws = spec.ws.map((n) =>
+        `<span class="ws ${n === spec.on ? "on" : ""}">${n}</span>`
+      ).join("");
+      const desk = spec.desk
+        ? `<span class="sep">/</span><span class="desk-chip">${spec.desk}</span>`
+        : `<span class="desk-chip quiet"></span>`;
+      const dnd = spec.dnd ? `<span class="dnd">dnd</span>` : "";
+      document.getElementById("bar").innerHTML = `
+        <div class="bar-left"><span>󰣇</span>${ws}${desk}</div>
+        <div class="bar-center">${spec.clock}</div>
+        <div class="bar-right">${dnd}<span>wlan</span><span>vol</span><span>86%</span></div>`;
+    }
+
+    function renderStage(s) {
+      const wins = stages[s] || (s === "call" ? stages.call : stages.default);
+      document.getElementById("stage").innerHTML = wins.map((w) => `
+        <div class="window ${w.dim ? "dim" : ""}" style="left:${w.x}px;top:${w.y}px;width:${w.w}px;height:${w.h}px">
+          <div class="titlebar">${w.title}</div>
+          <div class="win-body">${w.t}<span class="cursor">▍</span></div>
+        </div>`).join("");
+    }
+
+    renderBar(screen);
+    renderStage(screen === "writing" || screen === "call" ? screen : "default");
+  </script>
+</body>
+</html>
