@@ -9,14 +9,13 @@ BarWidget {
   id: root
   moduleName: "modoterra.omadesk"
 
-  readonly property string desksDir: (Quickshell.env("HOME") || "") + "/.config/omarchy/omadesk"
-  readonly property string desksPath: desksDir + "/desks.json"
-  readonly property color quietForeground: bar ? bar.foreground : Color.foreground
+  readonly property string desksPath: (Quickshell.env("HOME") || "") + "/.config/omarchy/omadesk/desks.json"
+  readonly property color barFg: bar ? bar.barForeground : Color.foreground
 
   property var currentId: null
   property string currentName: ""
   readonly property bool hasDesk: currentName !== ""
-  readonly property string chipText: hasDesk ? "/ " + currentName : ""
+  readonly property string chipText: hasDesk ? "/ " + currentName : "Desks"
 
   function deskNameFor(state, id) {
     if (id === null || id === undefined || !state || !state.desks)
@@ -56,8 +55,13 @@ BarWidget {
     Util.execDetached("omarchy-shell shell toggle " + Util.shellQuote(root.moduleName))
   }
 
+  // Size from the label, not from a fill-anchored child. Empty-name used to
+  // collapse the slot to an invisible 12px gap after the workspace numbers.
   implicitWidth: button.implicitWidth
-  implicitHeight: button.implicitHeight
+  implicitHeight: barSize
+  visible: true
+
+  Component.onCompleted: console.log("omadesk chip", chipText, implicitWidth, visible)
 
   FileView {
     id: desksFile
@@ -69,24 +73,15 @@ BarWidget {
     onFileChanged: reload()
   }
 
-  // FileView cannot observe a path that does not exist yet.
-  FileView {
-    path: root.desksDir
-    watchChanges: true
-    printErrors: false
-    onFileChanged: desksFile.reload()
-  }
-
   WidgetButton {
     id: button
-    anchors.fill: parent
+    anchors.centerIn: parent
     bar: root.bar
     text: root.chipText
-    foreground: root.hasDesk ? Color.accent : root.quietForeground
+    tooltipText: hasDesk ? currentName : "Desks"
+    foreground: hasDesk ? Color.accent : root.barFg
     useActiveColor: false
-    dimmed: !root.hasDesk
-    keepSpace: true
-    hasVisualContent: true
+    dimmed: false
     horizontalMargin: 6
     verticalPadding: 6
     onPressed: root.toggleOverlay()
