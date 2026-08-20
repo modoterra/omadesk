@@ -39,21 +39,18 @@ omarchy bar move modoterra.omadesk --section left
 omarchy-shell shell toggle modoterra.omadesk
 ```
 
-Suggested bind: Super+Shift+D. Super+Space stays the Omarchy menu. This
-plugin does not rebind keys; add the bind yourself if you want one, for
-example in `~/.config/hypr/bindings.lua`:
+Suggested bind: Super+D. Super+Space stays the Omarchy menu. Super+Shift+D
+is Omarchy’s Docker TUI, so this plugin does not take that key.
 
 ```lua
-o.bind("SUPER + SHIFT + D", "Desks", function()
-  os.execute("omarchy-shell shell toggle modoterra.omadesk")
-end)
+o.bind("SUPER + D", "Desks", "omarchy-shell shell toggle modoterra.omadesk")
 ```
 
 ## Keys
 
 | Key | Action |
 | --- | --- |
-| Super+Shift+D (documented bind) | toggle overlay |
+| Super+D | toggle overlay |
 | type | filter |
 | j / k, arrows, h l | move cursor |
 | 1–9 | jump to card |
