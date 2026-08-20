@@ -1037,11 +1037,18 @@ function lastClassSegment(cls) {
 
 function prettyApp(win) {
   var cls = String((win && (win.class || win.initialClass)) || "")
+  var full = cls.toLowerCase()
+  if (full.indexOf("geforce") >= 0) return "GeForce NOW"
+  if (full.indexOf("chrome-") === 0) {
+    var host = String(cls.slice(7).split("__")[0] || "").replace(/\/$/, "")
+    if (host) return host
+  }
   var last = lastClassSegment(cls)
   var lower = last.toLowerCase()
   if (lower === "zed") return "Zed"
   if (lower === "ghostty") return "Ghostty"
   if (lower === "chromium" || lower === "chrome" || lower === "google-chrome") return "Chromium"
+  if (lower === "nautilus") return "Files"
   if (last === "") return "app"
   return last
 }

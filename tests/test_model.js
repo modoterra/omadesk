@@ -552,6 +552,9 @@ test("24 broader exec guesses and gtk-launch desktop ids", function() {
   )
   assert.ok(model.isDesktopIdClass("org.gnome.Nautilus"))
   assert.ok(!model.isDesktopIdClass("chromium"))
+  assert.strictEqual(model.prettyApp({ class: "chrome-x.com__-Profile_1" }), "x.com")
+  assert.strictEqual(model.prettyApp({ class: "GeForceNOW" }), "GeForce NOW")
+  assert.strictEqual(model.prettyApp({ class: "dev.zed.Zed" }), "Zed")
 })
 
 assert.strictEqual(tests, 26)
