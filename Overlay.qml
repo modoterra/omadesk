@@ -32,6 +32,7 @@ Item {
   property string pendingWrite: ""
   property string clientsJson: ""
   property string workspacesJson: ""
+  property string monitorsJson: ""
   property var stageCallback: null
   property bool stageQueued: false
   property string batchPhase: ""
@@ -1136,8 +1137,12 @@ Item {
     for (var i = 0; i < argv.length; i++)
       cmd += " " + Util.shellQuote(argv[i])
     var ws = item.workspace !== undefined && item.workspace !== null ? String(item.workspace) : ""
-    if (ws) {
-      var lua = "hl.dsp.exec_cmd(" + JSON.stringify(cmd) + ", { workspace = " + JSON.stringify(ws) + " })"
+    var mon = item.monitor ? String(item.monitor) : ""
+    var rules = []
+    if (ws) rules.push("workspace = " + JSON.stringify(ws))
+    if (mon) rules.push("monitor = " + JSON.stringify(mon))
+    if (rules.length) {
+      var lua = "hl.dsp.exec_cmd(" + JSON.stringify(cmd) + ", { " + rules.join(", ") + " })"
       Quickshell.execDetached(["hyprctl", "dispatch", lua])
     } else {
       // placement is best-effort
@@ -1205,7 +1210,7 @@ Item {
   }
 
   function refreshStage(cb) {
-    if (clientsProc.running || workspacesProc.running) {
+    if (clientsProc.running || workspacesProc.running || monitorsProc.running) {
       root.stageCallback = cb
       root.stageQueued = true
       return
@@ -1213,6 +1218,7 @@ Item {
     root.stageCallback = cb
     root.clientsJson = ""
     root.workspacesJson = ""
+    root.monitorsJson = ""
     clientsProc.command = ["hyprctl", "-j", "clients"]
     clientsProc.running = true
   }
@@ -1227,7 +1233,7 @@ Item {
   function finishStage() {
     var stage = null
     if (typeof Model.parseStage === "function") {
-      try { stage = Model.parseStage(root.clientsJson, root.workspacesJson) } catch (e) { stage = null }
+      try { stage = Model.parseStage(root.clientsJson, root.workspacesJson, root.monitorsJson) } catch (e) { stage = null }
       if (!stage) {
         root.failStage()
         return
@@ -1424,6 +1430,19 @@ Item {
         return
       }
       root.workspacesJson = workspacesOut.text || ""
+      monitorsProc.command = ["hyprctl", "-j", "monitors"]
+      monitorsProc.running = true
+    }
+  }
+
+  Process {
+    id: monitorsProc
+    stdout: StdioCollector {
+      id: monitorsOut
+      waitForEnd: true
+    }
+    onExited: function(code) {
+      root.monitorsJson = code === 0 ? (monitorsOut.text || "[]") : "[]"
       root.finishStage()
     }
   }

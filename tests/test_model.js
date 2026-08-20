@@ -663,5 +663,64 @@ test("27 live vs dead, closePlan, wakePlan parks in the background", function() 
   )
 })
 
-assert.strictEqual(tests, 29)
+test("28 restore puts workspaces back on their monitors", function() {
+  const monitors = [
+    { name: "DP-1", focused: true, disabled: false, activeWorkspace: { id: 1, name: "1" } },
+    { name: "HDMI-A-1", focused: false, disabled: false, activeWorkspace: { id: 4, name: "4" } }
+  ]
+  const stage = model.parseStage(clientsText, workspacesText, JSON.stringify(monitors))
+  assert.strictEqual(stage.layout.length, 2)
+  assert.strictEqual(stage.layout[0].n, 1)
+  assert.strictEqual(stage.layout[0].monitor, "DP-1")
+  assert.strictEqual(stage.layout[0].focused, true)
+  assert.strictEqual(stage.layout[1].n, 4)
+  assert.strictEqual(stage.layout[1].monitor, "HDMI-A-1")
+  assert.ok(stage.monitors.indexOf("HDMI-A-1") >= 0)
+  assert.strictEqual(stage.lastWorkspace, 1)
+  const recipe = model.snapshotRecipe(stage, "Dual", model.defaultExtras(), stage.lastWorkspace, "2026-08-20T22:00:00Z")
+  assert.strictEqual(recipe.layout.length, 2)
+  assert.strictEqual(recipe.workspaces.filter((w) => w.n === 1)[0].monitor, "DP-1")
+  const desk = {
+    id: "dual",
+    name: "Dual",
+    layout: [
+      { n: 1, monitor: "DP-1", focused: true },
+      { n: 4, monitor: "HDMI-A-1" }
+    ],
+    workspaces: [
+      { n: 1, monitor: "DP-1", windows: [{ class: "dev.zed.Zed", address: "0x1" }] },
+      { n: 4, monitor: "HDMI-A-1", windows: [{ class: "chromium", address: "0x4" }] }
+    ]
+  }
+  const parked = {
+    parked: [
+      { slug: "dual", n: 1, address: "0x1" },
+      { slug: "dual", n: 4, address: "0x4" }
+    ],
+    monitors: ["DP-1", "HDMI-A-1"]
+  }
+  const plan = model.restorePlan(parked, "dual", desk)
+  const moves = plan.dispatches.filter((d) => d.indexOf("window.move") >= 0)
+  const layouts = plan.dispatches.filter((d) => d.indexOf("workspace.move") >= 0)
+  assert.strictEqual(moves.length, 2)
+  assert.strictEqual(layouts.length, 2)
+  assert.ok(layouts[0].indexOf('workspace = "1"') >= 0 && layouts[0].indexOf('monitor = "DP-1"') >= 0)
+  assert.ok(layouts[1].indexOf('workspace = "4"') >= 0 && layouts[1].indexOf('monitor = "HDMI-A-1"') >= 0)
+  const oneScreen = model.restorePlan({ parked: parked.parked, monitors: ["DP-1"] }, "dual", desk)
+  const oneLayout = oneScreen.dispatches.filter((d) => d.indexOf("workspace.move") >= 0)
+  assert.strictEqual(oneLayout.length, 1)
+  assert.ok(oneLayout[0].indexOf("HDMI") === -1)
+  assert.strictEqual(
+    model.workspaceMoveDispatch("4", "HDMI-A-1"),
+    'hl.dsp.workspace.move({ workspace = "4", monitor = "HDMI-A-1" })'
+  )
+  const cards = model.pickerCards({ version: 1, currentId: "dual", desks: [desk] }, "")
+  assert.ok(cards[0].meta.indexOf("2 screens") >= 0)
+  const woke = model.wakePlan(desk, { windows: [], parked: [], monitors: ["DP-1", "HDMI-A-1"] }, "writing")
+  const onHdmi = woke.launches.filter((item) => String(item.workspace).indexOf("omadesk-dual-4") >= 0)[0]
+  assert.ok(onHdmi)
+  assert.strictEqual(onHdmi.monitor, "HDMI-A-1")
+})
+
+assert.strictEqual(tests, 30)
 console.log("ok")

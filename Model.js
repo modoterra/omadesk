@@ -102,9 +102,11 @@ function jumpCursor(nOrIndex, count, maybeN) {
   return current
 }
 
-function parseStage(clientsJson, workspacesJson) {
+function parseStage(clientsJson, workspacesJson, monitorsJson) {
   var clients = parseJsonArg(clientsJson)
   var workspaces = parseJsonArg(workspacesJson)
+  var layout = parseLayout(monitorsJson, workspaces)
+  var monitors = connectedMonitorNames(monitorsJson, workspaces)
   var groups = {}
   var windows = []
   var parked = []
@@ -142,13 +144,21 @@ function parseStage(clientsJson, workspacesJson) {
   }
   var wsOut = []
   for (n = 1; n <= 10; n++) {
-    if (groups[n] && groups[n].length) wsOut.push({ n: n, windows: groups[n] })
+    if (groups[n] && groups[n].length) {
+      wsOut.push({
+        n: n,
+        windows: groups[n],
+        monitor: monitorForWorkspace(n, layout, groups[n], workspaces)
+      })
+    }
   }
   return {
     workspaces: wsOut,
     windows: windows,
     parked: parked,
-    lastWorkspace: pickLastWorkspace(workspaces, wsOut)
+    layout: layout,
+    monitors: monitors,
+    lastWorkspace: pickLastWorkspace(workspaces, wsOut, layout)
   }
 }
 
@@ -189,6 +199,19 @@ function closeDispatch(address) {
 function focusDispatch(workspaceSelector) {
   var ws = String(workspaceSelector || "")
   return "hl.dsp.focus({ workspace = \"" + ws + "\" })"
+}
+
+function workspaceMoveDispatch(workspaceSelector, monitor) {
+  var ws = String(workspaceSelector || "")
+  var mon = safeMonitor(monitor)
+  return "hl.dsp.workspace.move({ workspace = \"" + ws + "\", monitor = \"" + mon + "\" })"
+}
+
+function safeMonitor(name) {
+  var s = String(name || "")
+  if (!s) return ""
+  if (/["\\\n\r]/.test(s)) return ""
+  return s
 }
 
 function parkPlan(stage, slug, toSlug, desk) {
@@ -247,7 +270,16 @@ function restorePlan(clientsJson, slug, desk) {
     if (!client.address) continue
     dispatches.push(moveDispatch(String(n), client.address))
   }
-  return { slug: clean, dispatches: dispatches, batch: joinBatch(dispatches) }
+  var connected = []
+  if (clientsJson && isArray(clientsJson.monitors)) connected = copyStrings(clientsJson.monitors)
+  var layoutMoves = layoutDispatches(desk, connected)
+  for (i = 0; i < layoutMoves.length; i++) dispatches.push(layoutMoves[i])
+  return {
+    slug: clean,
+    dispatches: dispatches,
+    layout: layoutMoves,
+    batch: joinBatch(dispatches)
+  }
 }
 
 function readDesks(text) {
@@ -381,7 +413,7 @@ function snapshotRecipe(stage, name, extras, lastWorkspace, nowIso) {
     return { workspaces: workspaces, lastWorkspace: last }
   }
   var display = String(name).replace(/^\s+|\s+$/g, "")
-  return {
+  var recipe = {
     id: uniqueId(slugify(display)),
     name: display,
     lastWorkspace: last,
@@ -389,6 +421,9 @@ function snapshotRecipe(stage, name, extras, lastWorkspace, nowIso) {
     extras: mergeExtras(defaultExtras(), extras),
     workspaces: workspaces
   }
+  var layout = snapshotLayout(stage, workspaces)
+  if (layout.length) recipe.layout = layout
+  return recipe
 }
 
 function uniqueId(base, existingIds) {
@@ -555,14 +590,17 @@ function launchMissingPlan(desk, clientsJson) {
       }
       var exec = resolveExec(rw)
       if (!exec || !exec.length) continue
-      launches.push({
+      var mon = safeMonitor((ws && ws.monitor) || (rw && rw.monitor))
+      var item = {
         n: n,
         workspace: String(n),
         exec: exec,
         argv: exec,
         class: String((rw && rw.class) || ""),
         title: String((rw && rw.title) || "")
-      })
+      }
+      if (mon) item.monitor = mon
+      launches.push(item)
     }
   }
   launches.launches = launches.slice()
@@ -580,7 +618,7 @@ function updateDesk(state, deskId, stage, nowIso) {
   for (i = 0; i < next.desks.length; i++) {
     if (next.desks[i].id !== deskId) continue
     var prev = next.desks[i]
-    next.desks[i] = {
+    var updated = {
       id: prev.id,
       name: prev.name,
       lastWorkspace: last != null ? last : prev.lastWorkspace,
@@ -589,6 +627,9 @@ function updateDesk(state, deskId, stage, nowIso) {
       extras: prev.extras,
       workspaces: workspaces
     }
+    var layout = snapshotLayout(source, workspaces)
+    if (layout.length) updated.layout = layout
+    next.desks[i] = updated
     break
   }
   return next
@@ -754,7 +795,23 @@ function deskSpaceMeta(desk) {
   for (i = 0; i < list.length; i++) {
     if (list[i] && list[i].windows && list[i].windows.length) used += 1
   }
-  return used + " space" + (used === 1 ? "" : "s") + " · last used "
+  var screens = deskScreenCount(desk)
+  var extra = screens > 1 ? screens + " screens · last used " : "last used "
+  return used + " space" + (used === 1 ? "" : "s") + " · " + extra
+}
+
+function deskScreenCount(desk) {
+  var layout = deskLayout(desk)
+  var seen = {}
+  var n = 0
+  var i
+  for (i = 0; i < layout.length; i++) {
+    var mon = safeMonitor(layout[i] && layout[i].monitor)
+    if (!mon || seen[mon]) continue
+    seen[mon] = true
+    n += 1
+  }
+  return n
 }
 
 function deskLastUsedMs(desk) {
@@ -885,8 +942,13 @@ function monitorName(client, workspaces) {
   return String(client.monitor)
 }
 
-function pickLastWorkspace(workspaces, occupied) {
+function pickLastWorkspace(workspaces, occupied, layout) {
   var i
+  if (isArray(layout)) {
+    for (i = 0; i < layout.length; i++) {
+      if (layout[i] && layout[i].focused && layout[i].n >= 1 && layout[i].n <= 10) return layout[i].n
+    }
+  }
   for (i = 0; i < workspaces.length; i++) {
     var ws = workspaces[i]
     if (!(ws && (ws.focused || ws.active || ws.currentlyActive))) continue
@@ -898,6 +960,127 @@ function pickLastWorkspace(workspaces, occupied) {
     if (numberedWorkspaceId(workspaces[i])) return 1
   }
   return null
+}
+
+function parseLayout(monitorsJson, workspaces) {
+  var mons = parseJsonArg(monitorsJson)
+  var out = []
+  var i
+  if (mons.length) {
+    for (i = 0; i < mons.length; i++) {
+      var m = mons[i]
+      if (!m || m.disabled) continue
+      var name = safeMonitor(m.name)
+      if (!name) continue
+      var n = numberedWorkspaceId(m.activeWorkspace)
+      if (!n && m.activeWorkspace && m.activeWorkspace.id >= 1 && m.activeWorkspace.id <= 10) {
+        n = Number(m.activeWorkspace.id)
+      }
+      if (!n) continue
+      out.push({ n: n, monitor: name, focused: !!m.focused })
+    }
+    return out
+  }
+  return out
+}
+
+function connectedMonitorNames(monitorsJson, workspaces) {
+  var mons = parseJsonArg(monitorsJson)
+  var out = []
+  var seen = {}
+  var i
+  if (mons.length) {
+    for (i = 0; i < mons.length; i++) {
+      if (!mons[i] || mons[i].disabled) continue
+      var name = safeMonitor(mons[i].name)
+      if (!name || seen[name]) continue
+      seen[name] = true
+      out.push(name)
+    }
+    return out
+  }
+  var list = isArray(workspaces) ? workspaces : parseJsonArg(workspaces)
+  for (i = 0; i < list.length; i++) {
+    var mon = safeMonitor(list[i] && list[i].monitor)
+    if (!mon || seen[mon]) continue
+    seen[mon] = true
+    out.push(mon)
+  }
+  return out
+}
+
+function monitorForWorkspace(n, layout, windows, workspaces) {
+  var i
+  if (isArray(layout)) {
+    for (i = 0; i < layout.length; i++) {
+      if (layout[i] && Number(layout[i].n) === Number(n) && layout[i].monitor) return String(layout[i].monitor)
+    }
+  }
+  if (windows && windows[0] && windows[0].monitor) return String(windows[0].monitor)
+  var list = isArray(workspaces) ? workspaces : []
+  for (i = 0; i < list.length; i++) {
+    if (numberedWorkspaceId(list[i]) === Number(n) && list[i].monitor) return String(list[i].monitor)
+  }
+  return ""
+}
+
+function deskLayout(desk) {
+  if (desk && isArray(desk.layout) && desk.layout.length) return normalizeLayout(desk.layout)
+  var raw = []
+  var list = deskWorkspaces(desk)
+  var i
+  for (i = 0; i < list.length; i++) {
+    var n = Number(list[i] && list[i].n)
+    var mon = safeMonitor(list[i] && list[i].monitor)
+    if (!mon && list[i] && list[i].windows && list[i].windows[0]) mon = safeMonitor(list[i].windows[0].monitor)
+    if (!n || n < 1 || n > 10 || !mon) continue
+    raw.push({ n: n, monitor: mon })
+  }
+  return normalizeLayout(raw)
+}
+
+function normalizeLayout(layout) {
+  var out = []
+  var seenN = {}
+  var seenMon = {}
+  var i
+  var list = isArray(layout) ? layout : []
+  for (i = 0; i < list.length; i++) {
+    var n = Number(list[i] && list[i].n)
+    var mon = safeMonitor(list[i] && list[i].monitor)
+    if (!n || n < 1 || n > 10 || !mon) continue
+    if (seenN[n] || seenMon[mon]) continue
+    seenN[n] = true
+    seenMon[mon] = true
+    var row = { n: n, monitor: mon }
+    if (list[i].focused) row.focused = true
+    out.push(row)
+  }
+  return out
+}
+
+function snapshotLayout(stage, workspaces) {
+  if (stage && isArray(stage.layout) && stage.layout.length) return normalizeLayout(stage.layout)
+  return deskLayout({ workspaces: workspaces || (stage && stage.workspaces) })
+}
+
+function layoutDispatches(desk, connected) {
+  var layout = deskLayout(desk)
+  var allow = {}
+  var i
+  var names = isArray(connected) ? connected : []
+  for (i = 0; i < names.length; i++) {
+    var nm = safeMonitor(names[i])
+    if (nm) allow[nm] = true
+  }
+  var out = []
+  for (i = 0; i < layout.length; i++) {
+    var mon = safeMonitor(layout[i].monitor)
+    if (!mon) continue
+    if (names.length && !allow[mon]) continue
+    out.push(workspaceMoveDispatch(String(layout[i].n), mon))
+  }
+  return out
 }
 
 function windowSelector(address) {
@@ -986,7 +1169,11 @@ function normalizeDesk(desk) {
       if (isScratchpadish(wins[j])) continue
       windows.push(normalizeRecipeWindow(wins[j]))
     }
-    workspaces.push({ n: n, windows: windows })
+    var rec = { n: n, windows: windows }
+    var mon = safeMonitor(ws && ws.monitor)
+    if (!mon && windows[0]) mon = safeMonitor(windows[0].monitor)
+    if (mon) rec.monitor = mon
+    workspaces.push(rec)
   }
   workspaces.sort(function(a, b) { return a.n - b.n })
   var last = desk.lastWorkspace
@@ -1016,6 +1203,9 @@ function normalizeDesk(desk) {
     workspaces: workspaces
   }
   if (lastUsed != null && isFinite(Number(lastUsed))) out.lastUsed = Number(lastUsed)
+  var layout = normalizeLayout(desk.layout)
+  if (!layout.length) layout = deskLayout({ workspaces: workspaces })
+  if (layout.length) out.layout = layout
   return out
 }
 
@@ -1214,12 +1404,14 @@ function wakePlan(desk, stage, currentId) {
   }
   var launches = launchMissingPlan(forced, source)
   var list = launches && launches.launches ? launches.launches : (isArray(launches) ? launches : [])
-  if (!here) {
-    var slug = sanitizeSlug(desk && desk.id)
-    var i
-    for (i = 0; i < list.length; i++) {
-      list[i].workspace = parkSelector(slug, list[i].n)
-    }
+  var layout = deskLayout(desk)
+  var byN = {}
+  var li
+  for (li = 0; li < layout.length; li++) byN[layout[li].n] = layout[li].monitor
+  var i
+  for (i = 0; i < list.length; i++) {
+    if (!here) list[i].workspace = parkSelector(sanitizeSlug(desk && desk.id), list[i].n)
+    if (!list[i].monitor && byN[list[i].n]) list[i].monitor = byN[list[i].n]
   }
   list.launches = list.slice()
   return list
@@ -1262,7 +1454,20 @@ function snapshotWorkspaces(stage) {
       if (isScratchpadish(list[j])) continue
       windows.push(normalizeRecipeWindow(recipeFromStageWindow(list[j])))
     }
-    out.push({ n: n, windows: windows })
+    var rec = { n: n, windows: windows }
+    var mon = safeMonitor(wss[w] && wss[w].monitor)
+    if (!mon && windows[0]) mon = safeMonitor(windows[0].monitor)
+    if (!mon && stage && isArray(stage.layout)) {
+      var li
+      for (li = 0; li < stage.layout.length; li++) {
+        if (stage.layout[li] && Number(stage.layout[li].n) === n) {
+          mon = safeMonitor(stage.layout[li].monitor)
+          break
+        }
+      }
+    }
+    if (mon) rec.monitor = mon
+    out.push(rec)
   }
   out.sort(function(a, b) { return a.n - b.n })
   return out
