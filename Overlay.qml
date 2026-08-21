@@ -1895,7 +1895,7 @@ Item {
             id: titleText
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
-            text: root.mode === "save" ? "Save Current Desk"
+            text: root.mode === "save" ? "Save current desk"
               : (root.mode === "rename" ? "Rename"
               : (root.mode === "extras" && root.extrasPickingTheme ? "Theme"
               : (root.mode === "extras" && root.extrasDesk ? String(root.extrasDesk.name || "")
