@@ -1160,6 +1160,42 @@ test("42 restoring unsaved focuses a restored unnamed workspace, not the outgoin
   assert.notStrictEqual(Number(badLast.lastWorkspace), 11)
 })
 
+test("43 unnamed close while here also closes leaked unnamed lots, not named or scratchpad", function() {
+  const leaked = {
+    windows: [],
+    parked: [
+      { slug: "unnamed", n: 1, address: "0xunsaved01", class: "foot" },
+      { slug: "unnamed", n: 2, address: "0xunsaved02", class: "com.mitchellh.ghostty" },
+      { slug: "writing", n: 1, address: "0xwriting01", class: "dev.zed.Zed" }
+    ]
+  }
+  const plan = model.closePlan({ id: "unnamed", name: "Unsaved" }, leaked, null)
+  const blob = plan.dispatches.join(" ")
+  assert.ok(blob.indexOf("0xunsaved01") >= 0)
+  assert.ok(blob.indexOf("0xunsaved02") >= 0)
+  assert.ok(blob.indexOf("0xwriting01") === -1)
+  assert.ok(blob.indexOf("scratchpad") === -1)
+  plan.dispatches.forEach((lua) => {
+    assert.ok(lua.indexOf("hl.dsp.window.close({") === 0)
+  })
+  const mixed = model.closePlan({ id: "unnamed", name: "Unsaved" }, {
+    windows: [
+      { address: "0xhere01", workspace: 1, class: "mpv" },
+      { address: "0xsc", workspace: "special:scratchpad", class: "foot" }
+    ],
+    parked: [
+      { slug: "unnamed", n: 3, address: "0xleak01", class: "foot" },
+      { slug: "call", n: 1, address: "0xcall01", class: "chromium" }
+    ]
+  }, null)
+  const mixedBlob = mixed.dispatches.join(" ")
+  assert.ok(mixedBlob.indexOf("0xhere01") >= 0)
+  assert.ok(mixedBlob.indexOf("0xleak01") >= 0)
+  assert.ok(mixedBlob.indexOf("0xsc") === -1)
+  assert.ok(mixedBlob.indexOf("0xcall01") === -1)
+  assert.ok(mixedBlob.indexOf("scratchpad") === -1)
+})
+
 console.log("ok")
 
 

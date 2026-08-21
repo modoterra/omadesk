@@ -1416,7 +1416,11 @@ function isCurrentDesk(desk, currentId) {
 function liveWindows(desk, stage, currentId) {
   if (isCurrentDesk(desk, currentId)) return stageWindows(stage)
   if ((currentId == null || currentId === "") && (!desk || sanitizeSlug(desk.id) === "unnamed")) {
-    return stageWindows(stage)
+    var here = stageWindows(stage)
+    var parked = parkedForSlug(stage, "unnamed")
+    if (!parked.length) return here
+    if (!here.length) return parked
+    return here.concat(parked)
   }
   return parkedForSlug(stage, desk && desk.id)
 }
