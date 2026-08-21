@@ -5,20 +5,11 @@
 // Two Chromiums after reboot are best-effort; guessExec uses --new-window.
 
 function emptyState() {
-  return { version: 1, currentId: null, desks: [], showWorkspaces: 5 }
+  return { version: 1, currentId: null, desks: [] }
 }
 
 function defaultExtras() {
-  return { dnd: "leave", theme: "leave", launchMissing: true, showWorkspaces: 5 }
-}
-
-function clampShowWorkspaces(n) {
-  var v = Number(n)
-  if (!isFinite(v)) return 5
-  v = Math.round(v)
-  if (v < 1) return 1
-  if (v > 10) return 10
-  return v
+  return { dnd: "leave", theme: "leave", launchMissing: true }
 }
 
 function desksPath(home) {
@@ -903,11 +894,7 @@ function pickerCards(state, query, stage, nowMs) {
       here: here,
       life: life,
       dnd: !!(desk.extras && desk.extras.dnd === "on"),
-      tiles: deskTiles(
-        deskPreviewSource(desk, stage, st.currentId),
-        10,
-        desk.extras && desk.extras.showWorkspaces != null ? desk.extras.showWorkspaces : st.showWorkspaces
-      ),
+      tiles: deskTiles(deskPreviewSource(desk, stage, st.currentId)),
       meta: deskSpaceMeta(desk) + formatDeskMeta(desk, nowMs, here),
       desk: desk
     })
@@ -963,12 +950,9 @@ function unsavedCard(state, stage) {
   // +new parks the untitled room then leaves currentId null; 1-10 is empty
   // and the windows sit on unnamed lots, so this is a parked unsaved room.
   if (here && parked.length && !stageWindows(stage).length) here = false
-  var shown = state && state.showWorkspaces
   var parkedStage = parkedToStage(parked)
-  if (stage && stage.monitorSizes) {
-    if (parkedStage) parkedStage.monitorSizes = stage.monitorSizes
-  }
-  var tiles = here ? previewTiles(stage, 10, shown) : previewTiles(parkedStage, 10, shown)
+  if (stage && stage.monitorSizes && parkedStage) parkedStage.monitorSizes = stage.monitorSizes
+  var tiles = here ? previewTiles(stage) : previewTiles(parkedStage)
   return {
     kind: "unsaved",
     name: "Unsaved",
@@ -1426,12 +1410,7 @@ function normalizeState(state) {
     if (desk) desks.push(desk)
   }
   var currentId = src.currentId == null || src.currentId === "" ? null : String(src.currentId)
-  return {
-    version: 1,
-    currentId: currentId,
-    desks: desks,
-    showWorkspaces: clampShowWorkspaces(src.showWorkspaces)
-  }
+  return { version: 1, currentId: currentId, desks: desks }
 }
 
 function normalizeDesk(desk) {
@@ -1532,18 +1511,15 @@ function mergeExtras(base, extra) {
   var out = {
     dnd: "leave",
     theme: "leave",
-    launchMissing: true,
-    showWorkspaces: 5
+    launchMissing: true
   }
   if (base && (base.dnd === "on" || base.dnd === "off" || base.dnd === "leave")) out.dnd = base.dnd
   if (base && typeof base.theme === "string" && base.theme !== "") out.theme = base.theme
   if (base && base.launchMissing === false) out.launchMissing = false
-  if (base && base.showWorkspaces != null) out.showWorkspaces = clampShowWorkspaces(base.showWorkspaces)
   if (extra && (extra.dnd === "on" || extra.dnd === "off" || extra.dnd === "leave")) out.dnd = extra.dnd
   if (extra && typeof extra.theme === "string" && extra.theme !== "") out.theme = extra.theme
   if (extra && extra.launchMissing === false) out.launchMissing = false
   if (extra && extra.launchMissing === true) out.launchMissing = true
-  if (extra && extra.showWorkspaces != null) out.showWorkspaces = clampShowWorkspaces(extra.showWorkspaces)
   return out
 }
 
@@ -1635,10 +1611,11 @@ function tileLabel(ws) {
   return label
 }
 
-function deskTiles(desk, limit, shownCount) {
+function deskTiles(desk, limit) {
   var cap = Number(limit)
   if (!isFinite(cap) || cap < 1) cap = 10
   if (cap > 10) cap = 10
+  var floor = cap < 5 ? cap : 5
   var byN = {}
   var list = deskWorkspaces(desk)
   var i
@@ -1661,13 +1638,7 @@ function deskTiles(desk, limit, shownCount) {
       }
     }
   }
-  var shown = clampShowWorkspaces(
-    shownCount != null ? shownCount
-      : (desk && desk.extras && desk.extras.showWorkspaces != null ? desk.extras.showWorkspaces
-        : (desk && desk.showWorkspaces))
-  )
-  if (shown > cap) shown = cap
-  if (last < shown) last = shown
+  if (last < floor) last = floor
   if (last > cap) last = cap
   var sizes = (desk && desk.monitorSizes) || {}
   var tiles = []
@@ -1986,8 +1957,8 @@ function wakePlan(desk, stage, currentId) {
   return list
 }
 
-function previewTiles(source, limit, shown) {
-  return deskTiles(source, limit, shown)
+function previewTiles(source, limit) {
+  return deskTiles(source, limit)
 }
 
 function snapshotWorkspaces(stage) {
