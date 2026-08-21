@@ -244,9 +244,11 @@ function buildParkPlan(stage, slug) {
   var i
   for (i = 0; i < list.length; i++) {
     var win = list[i]
-    var n = Number(win.workspace)
+    if (!win || !win.address) continue
+    // Number("special:scratchpad") is NaN, and NaN < 1 / NaN > 10 are both false.
+    if (isScratchpadish(win)) continue
+    var n = clientWorkspaceN(win)
     if (n < 1 || n > 10) continue
-    if (!win.address) continue
     var lua = moveDispatch(parkSelector(clean, n), win.address)
     if (lua) dispatches.push(lua)
   }

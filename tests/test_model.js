@@ -1083,6 +1083,46 @@ test("40 saved desks never take the unnamed parking id", function() {
   })
 })
 
+test("41 parkPlan skips scratchpad and never emits NaN lots", function() {
+  const stage = {
+    windows: [
+      { address: "0xzed01", workspace: 1, class: "dev.zed.Zed" },
+      { address: "0xscstr", workspace: "special:scratchpad", class: "foot", title: "scratch" },
+      { address: "0xscobj", workspace: { id: -98, name: "special:scratchpad" }, class: "foot" },
+      { address: "0xspecial", workspace: { id: -99, name: "special" }, class: "foot" },
+      { address: "0xnone", class: "mpv" },
+      { address: "0xghost", workspace: { id: 2, name: "2" }, class: "com.mitchellh.ghostty" }
+    ]
+  }
+  const plan = model.parkPlan(stage, "writing")
+  const blob = plan.dispatches.join(" ")
+  assert.ok(blob.indexOf("0xzed01") >= 0)
+  assert.ok(blob.indexOf('workspace = "special:omadesk-writing-1"') >= 0)
+  assert.ok(blob.indexOf("0xghost") >= 0)
+  assert.ok(blob.indexOf('workspace = "special:omadesk-writing-2"') >= 0)
+  assert.ok(blob.indexOf("0xscstr") === -1)
+  assert.ok(blob.indexOf("0xscobj") === -1)
+  assert.ok(blob.indexOf("0xspecial") === -1)
+  assert.ok(blob.indexOf("0xnone") === -1)
+  plan.dispatches.forEach((lua) => {
+    assert.ok(lua.indexOf("NaN") === -1)
+    assert.ok(lua.indexOf("scratchpad") === -1)
+    assert.ok(/workspace = "special:omadesk-writing-([1-9]|10)"/.test(lua))
+  })
+  const parsed = model.parkPlan(model.parseStage(clientsText, workspacesText), "writing")
+  parsed.dispatches.forEach((lua) => {
+    assert.ok(lua.indexOf("0x55f11fe15aaa") === -1)
+    assert.ok(lua.indexOf("NaN") === -1)
+    assert.ok(lua.indexOf("scratchpad") === -1)
+  })
+  const unnamed = model.parkPlan(stage, "unnamed")
+  unnamed.dispatches.forEach((lua) => {
+    assert.ok(lua.indexOf("scratchpad") === -1)
+    assert.ok(lua.indexOf("NaN") === -1)
+    assert.ok(lua.indexOf("0xscstr") === -1)
+  })
+})
+
 console.log("ok")
 
 
