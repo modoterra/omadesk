@@ -1815,6 +1815,7 @@ Item {
       height: tile.underStrip
 
       Rectangle {
+        id: underRule
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top
@@ -1822,24 +1823,25 @@ Item {
         color: root.borderSoft
       }
 
-      Row {
+      Item {
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.top: parent.top
+        anchors.top: underRule.bottom
         anchors.bottom: parent.bottom
-        anchors.leftMargin: 8
-        anchors.rightMargin: 8
-        anchors.topMargin: 8
-        anchors.bottomMargin: 8
-        spacing: 8
 
-        Repeater {
-          model: tile.hasUnder ? tile.under : []
+        Row {
+          anchors.left: parent.left
+          anchors.verticalCenter: parent.verticalCenter
+          anchors.leftMargin: 8
+          spacing: 8
 
-          delegate: Item {
-            required property var modelData
-            width: 16
-            height: 16
+          Repeater {
+            model: tile.hasUnder ? tile.under : []
+
+            delegate: Item {
+              required property var modelData
+              width: 16
+              height: 16
 
             Image {
               id: underIcon
@@ -1861,6 +1863,7 @@ Item {
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
               font.weight: Font.DemiBold
+            }
             }
           }
         }
