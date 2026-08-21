@@ -445,6 +445,8 @@ function snapshotRecipe(stage, name, extras, lastWorkspace, nowIso) {
 function uniqueId(base, existingIds) {
   var id = sanitizeSlug(base)
   var taken = idSet(existingIds)
+  // Unsaved rooms park on omadesk-unnamed-N; a saved desk must not reuse that id.
+  taken.unnamed = true
   if (!taken[id]) return id
   var n = 2
   while (taken[id + "-" + n]) n++

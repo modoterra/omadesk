@@ -1028,6 +1028,61 @@ test("39 unknown window class is not launched as a command", function() {
   same(model.guessExec({ class: "mpv" }), ["mpv"])
 })
 
+test("40 saved desks never take the unnamed parking id", function() {
+  assert.strictEqual(model.uniqueId("unnamed", []), "unnamed-2")
+  assert.strictEqual(model.uniqueId("Unnamed", ["writing"]), "unnamed-2")
+  assert.strictEqual(model.uniqueId("---", []), "unnamed-2")
+  assert.strictEqual(model.uniqueId("unnamed", ["unnamed-2"]), "unnamed-3")
+  assert.strictEqual(model.uniqueId("writing", []), "writing")
+  const stage = model.parseStage(clientsText, workspacesText)
+  const extras = model.defaultExtras()
+  const saved = model.saveDesk(model.emptyState(), model.snapshotRecipe(stage, "Unnamed", extras, 3, "2026-08-21T12:00:00Z"))
+  const id = saved.desks[0].id
+  assert.ok(id)
+  assert.notStrictEqual(id, "unnamed")
+  assert.strictEqual(saved.currentId, id)
+  const park = model.parkPlan(stage, model.currentSlug(saved))
+  assert.ok(park.dispatches.length >= 3)
+  park.dispatches.forEach((lua) => {
+    assert.ok(lua.indexOf("special:omadesk-" + id + "-") >= 0)
+    assert.ok(!/workspace = "special:omadesk-unnamed-[0-9]+"/.test(lua))
+  })
+  const mixed = {
+    parked: [
+      { slug: "unnamed", n: 1, address: "0xunsaved01", class: "foot" },
+      { slug: id, n: 1, address: "0xnamed01", class: "dev.zed.Zed" },
+      { slug: id, n: 2, address: "0xnamed02", class: "com.mitchellh.ghostty" }
+    ],
+    windows: [],
+    monitors: ["DP-1"]
+  }
+  const restore = model.restorePlan(mixed, id, saved.desks[0])
+  const restoreAddrs = restore.dispatches.join(" ")
+  assert.ok(restoreAddrs.indexOf("0xnamed01") >= 0)
+  assert.ok(restoreAddrs.indexOf("0xnamed02") >= 0)
+  assert.ok(restoreAddrs.indexOf("0xunsaved01") === -1)
+  const forget = model.forgetRestorePlan(mixed, saved.desks[0])
+  const forgetAddrs = forget.dispatches.join(" ")
+  assert.ok(forgetAddrs.indexOf("0xnamed01") >= 0)
+  assert.ok(forgetAddrs.indexOf("0xunsaved01") === -1)
+  const closeSaved = model.closePlan(saved.desks[0], mixed, "writing")
+  const closeSavedAddrs = closeSaved.dispatches.join(" ")
+  assert.ok(closeSavedAddrs.indexOf("0xnamed01") >= 0)
+  assert.ok(closeSavedAddrs.indexOf("0xunsaved01") === -1)
+  const closeUnsaved = model.closePlan({ id: "unnamed", name: "Unsaved" }, mixed, "writing")
+  const closeUnsavedAddrs = closeUnsaved.dispatches.join(" ")
+  assert.ok(closeUnsavedAddrs.indexOf("0xunsaved01") >= 0)
+  assert.ok(closeUnsavedAddrs.indexOf("0xnamed01") === -1)
+  const unsavedCards = model.pickerCards(saved, "", mixed)
+  assert.strictEqual(unsavedCards.filter((c) => c.kind === "unsaved").length, 1)
+  assert.strictEqual(unsavedCards.filter((c) => c.kind === "desk" && c.id === id).length, 1)
+  const fresh = model.freshPlan(stage, "unnamed")
+  fresh.park.dispatches.forEach((lua) => {
+    assert.ok(/workspace = "special:omadesk-unnamed-[0-9]+"/.test(lua))
+    assert.ok(lua.indexOf("omadesk-" + id + "-") === -1)
+  })
+})
+
 console.log("ok")
 
 
