@@ -1704,12 +1704,12 @@ Item {
     readonly property string tileLabel: tile.tileData ? String(tile.tileData.label || (tile.vacant ? "empty" : "")) : ""
     readonly property var panes: tile.tileData && tile.tileData.panes ? tile.tileData.panes : []
     readonly property int paneGap: 2
-    readonly property int numberInset: 4
+    readonly property int numberInset: 2
 
     color: tile.vacant ? "transparent" : root.tileFill
     border.width: 1
     border.color: tile.vacant ? root.borderSoft : Util.alpha(root.foreground, 0.12)
-    radius: 4
+    radius: 0
     implicitHeight: root.tileHeight
     implicitWidth: Style.space(96)
     clip: true
@@ -1759,7 +1759,7 @@ Item {
       color: "transparent"
       border.width: 1
       border.color: root.borderSoft
-      radius: height / 2
+      radius: 0
       implicitWidth: emptyLabel.implicitWidth + 12
       implicitHeight: emptyLabel.implicitHeight + 4
 
