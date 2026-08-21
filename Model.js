@@ -334,7 +334,6 @@ function guessExec(win) {
   var known = knownDesktopExec(lower, last)
   if (known && known.length) return known
   if (isDesktopIdClass(cls)) return ["gtk-launch", cls + ".desktop"]
-  if (/^[a-z][a-z0-9-]+$/.test(lower) && lower.indexOf("__") === -1) return [lower]
   return []
 }
 
@@ -406,7 +405,11 @@ function isUsableExec(argv, win) {
   var last = lastClassSegment(cls)
   if (cls.indexOf("chrome-") === 0) return false
   if (cls.indexOf("geforce") >= 0) return false
-  if (last && cmd.toLowerCase() === last && cls !== last) return false
+  if (last && cmd.toLowerCase() === last) {
+    if (cls !== last) return false
+    var guessed = guessExec(win)
+    if (!guessed || !guessed.length || String(guessed[0]).toLowerCase() !== cmd.toLowerCase()) return false
+  }
   return /^[A-Za-z0-9][A-Za-z0-9._+-]*$/.test(cmd)
 }
 
@@ -452,6 +455,10 @@ function saveDesk(state, recipe) {
   var next = normalizeState(state)
   var desk = normalizeDesk(recipe)
   if (!desk) return next
+  var ids = []
+  var i
+  for (i = 0; i < next.desks.length; i++) ids.push(next.desks[i].id)
+  desk.id = uniqueId(desk.id || desk.name, ids)
   next.desks.push(desk)
   next.currentId = desk.id
   return next
@@ -1105,7 +1112,7 @@ function layoutDispatches(desk, connected) {
   for (i = 0; i < layout.length; i++) {
     var mon = safeMonitor(layout[i].monitor)
     if (!mon) continue
-    if (names.length && !allow[mon]) continue
+    if (!allow[mon]) continue
     var lua = workspaceMoveDispatch(String(layout[i].n), mon)
     if (lua) out.push(lua)
   }

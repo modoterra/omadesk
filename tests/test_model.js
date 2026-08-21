@@ -888,5 +888,146 @@ test("34 empty and invalid parseStage yield an empty stage", function() {
   assert.strictEqual(obj.ok, false)
 })
 
+test("35 saveDesk uniquifies a second desk with the same display name", function() {
+  const stage = model.parseStage(clientsText, workspacesText)
+  const extras = model.defaultExtras()
+  const firstRecipe = model.snapshotRecipe(stage, "Writing", extras, 3, "2026-08-20T22:00:00Z")
+  const first = model.saveDesk(model.emptyState(), firstRecipe)
+  assert.strictEqual(first.desks.length, 1)
+  const firstId = first.desks[0].id
+  assert.ok(firstId)
+  const secondRecipe = model.snapshotRecipe(stage, "Writing", extras, 3, "2026-08-20T22:01:00Z")
+  const second = model.saveDesk(first, secondRecipe)
+  assert.strictEqual(second.desks.length, 2)
+  assert.strictEqual(second.desks[0].id, firstId)
+  assert.strictEqual(second.desks[0].name, "Writing")
+  assert.strictEqual(second.desks[1].name, "Writing")
+  assert.ok(second.desks[1].id)
+  assert.ok(second.desks[0].id !== second.desks[1].id)
+  assert.strictEqual(second.currentId, second.desks[1].id)
+  const again = model.saveDesk(first, firstRecipe)
+  assert.strictEqual(again.desks[0].id, firstId)
+  assert.ok(again.desks[1].id !== firstId)
+})
+
+test("36 empty connected monitors emit no workspace.move; missing display still skipped", function() {
+  const dualDesk = {
+    id: "dual",
+    name: "Dual",
+    layout: [
+      { n: 1, monitor: "DP-1", focused: true },
+      { n: 4, monitor: "HDMI-A-1" }
+    ],
+    workspaces: [
+      { n: 1, monitor: "DP-1", windows: [{ class: "dev.zed.Zed", address: "0xdual01" }] },
+      { n: 4, monitor: "HDMI-A-1", windows: [{ class: "chromium", address: "0xdual04" }] }
+    ]
+  }
+  const parked = {
+    parked: [
+      { slug: "dual", n: 1, address: "0xdual01" },
+      { slug: "dual", n: 4, address: "0xdual04" }
+    ],
+    monitors: []
+  }
+  const emptyConn = model.restorePlan(parked, "dual", dualDesk)
+  const emptyLayouts = emptyConn.dispatches.filter((d) => d.indexOf("workspace.move") >= 0)
+  assert.strictEqual(emptyLayouts.length, 0)
+  const switched = model.parkPlan(
+    { parked: parked.parked, windows: [], monitors: [] },
+    "writing",
+    "dual",
+    dualDesk
+  )
+  const switchLayouts = switched.restore.dispatches.filter((d) => d.indexOf("workspace.move") >= 0)
+  assert.strictEqual(switchLayouts.length, 0)
+  const oneScreen = model.restorePlan({ parked: parked.parked, monitors: ["DP-1"] }, "dual", dualDesk)
+  const oneLayout = oneScreen.dispatches.filter((d) => d.indexOf("workspace.move") >= 0)
+  assert.strictEqual(oneLayout.length, 1)
+  assert.ok(oneLayout[0].indexOf("HDMI") === -1)
+  assert.ok(oneLayout[0].indexOf('monitor = "DP-1"') >= 0)
+  emptyConn.dispatches.forEach((lua) => {
+    assert.ok(lua.indexOf("scratchpad") === -1)
+  })
+})
+
+test("37 unnamed close skips named lots and scratchpad; wake still parks in the background", function() {
+  const stage = model.parseStage(clientsText, workspacesText)
+  stage.parked = (stage.parked || []).concat([{
+    slug: "unnamed",
+    n: 1,
+    address: "0xunnamed01",
+    class: "foot",
+    title: "scratch file"
+  }])
+  const unsaved = { id: "unnamed", name: "Unsaved" }
+  const closeParked = model.closePlan(unsaved, stage, "writing")
+  const parkedAddrs = closeParked.dispatches.join(" ")
+  assert.ok(parkedAddrs.indexOf("0xunnamed01") >= 0)
+  assert.ok(parkedAddrs.indexOf("0x55f11fe15110") === -1)
+  assert.ok(parkedAddrs.indexOf("0x55f11fe15bbb") === -1)
+  assert.ok(parkedAddrs.indexOf("0x55f11fe15ccc") === -1)
+  assert.ok(parkedAddrs.indexOf("0x55f11fe15aaa") === -1)
+  assert.ok(parkedAddrs.indexOf("scratchpad") === -1)
+  closeParked.dispatches.forEach((lua) => {
+    assert.ok(lua.indexOf("hl.dsp.window.close({") === 0)
+  })
+  const closeHere = model.closePlan(unsaved, stage, null)
+  const hereAddrs = closeHere.dispatches.join(" ")
+  assert.ok(hereAddrs.indexOf("0x55f11fe15110") >= 0)
+  assert.ok(hereAddrs.indexOf("0x55f11fe15bbb") === -1)
+  assert.ok(hereAddrs.indexOf("0x55f11fe15ccc") === -1)
+  assert.ok(hereAddrs.indexOf("0x55f11fe15aaa") === -1)
+  assert.ok(hereAddrs.indexOf("scratchpad") === -1)
+  const park = model.parkPlan(stage, "unnamed")
+  park.dispatches.forEach((lua) => {
+    assert.ok(lua.indexOf("scratchpad") === -1)
+    assert.ok(lua.indexOf("0x55f11fe15aaa") === -1)
+  })
+  const review = model.demoDesks().desks.filter((d) => d.id === "review")[0]
+  const wake = model.wakePlan(review, stage, "writing")
+  assert.ok(wake.launches.length >= 1)
+  wake.launches.forEach((item) => {
+    assert.ok(String(item.workspace).indexOf("special:omadesk-review-") === 0)
+  })
+})
+
+test("38 disabled monitors are omitted from layout and connected names", function() {
+  const monitors = [
+    { name: "DP-1", focused: true, disabled: false, activeWorkspace: { id: 1, name: "1" } },
+    { name: "HDMI-A-1", focused: false, disabled: true, activeWorkspace: { id: 4, name: "4" } }
+  ]
+  const stage = model.parseStage(clientsText, workspacesText, JSON.stringify(monitors))
+  assert.ok(stage.monitors.indexOf("DP-1") >= 0)
+  assert.ok(stage.monitors.indexOf("HDMI-A-1") === -1)
+  stage.layout.forEach((row) => {
+    assert.ok(row.monitor !== "HDMI-A-1")
+  })
+  const desk = {
+    id: "dual",
+    layout: [
+      { n: 1, monitor: "DP-1" },
+      { n: 4, monitor: "HDMI-A-1" }
+    ]
+  }
+  const layouts = model.restorePlan({ parked: [], monitors: stage.monitors }, "dual", desk)
+    .dispatches.filter((d) => d.indexOf("workspace.move") >= 0)
+  assert.strictEqual(layouts.length, 1)
+  assert.ok(layouts[0].indexOf("HDMI") === -1)
+})
+
+test("39 unknown window class is not launched as a command", function() {
+  same(model.guessExec({ class: "TotallyUnknownApp" }), [])
+  same(model.resolveExec({ class: "TotallyUnknownApp" }), [])
+  same(model.resolveExec({ class: "TotallyUnknownApp", exec: ["TotallyUnknownApp"] }), [])
+  const launched = model.launchMissingPlan({
+    extras: model.defaultExtras(),
+    workspaces: [{ n: 1, windows: [{ class: "TotallyUnknownApp", title: "mystery" }] }]
+  }, "[]")
+  same(launched.launches, [])
+  same(model.guessExec({ class: "mpv" }), ["mpv"])
+})
+
 console.log("ok")
+
 

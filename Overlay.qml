@@ -672,23 +672,28 @@ Item {
     root.refreshStage(function(ok) {
       if (!ok) return
       var recipe = root.snapshotRecipe(name)
-      var id = root.uniqueDeskId(name)
-      if (recipe && typeof recipe === "object") {
-        recipe.id = id
+      if (!recipe || typeof recipe !== "object") {
+        recipe = { name: name, extras: { dnd: "leave", launchMissing: true }, lastUsed: Date.now() }
+      } else {
         recipe.name = name
-      }
-      var desk = recipe && recipe.workspaces ? recipe : {
-        id: id,
-        name: name,
-        recipe: recipe,
-        extras: { dnd: "leave", launchMissing: true },
-        lastUsed: Date.now()
       }
       var next = null
       if (typeof Model.saveDesk === "function") {
-        try { next = Model.saveDesk(root.desksState, desk) } catch (e) { next = null }
+        try { next = Model.saveDesk(root.desksState, recipe) } catch (e) { next = null }
       }
       if (!next) {
+        var id = root.uniqueDeskId(name)
+        var desk = recipe && recipe.workspaces ? recipe : {
+          id: id,
+          name: name,
+          recipe: recipe,
+          extras: { dnd: "leave", launchMissing: true },
+          lastUsed: Date.now()
+        }
+        if (desk && typeof desk === "object") {
+          desk.id = id
+          desk.name = name
+        }
         next = Util.cloneJson(root.desksState || root.emptyState())
         if (!next.desks) next.desks = []
         next.desks.push(desk)
