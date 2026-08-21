@@ -1316,6 +1316,92 @@ test("46 wake and launchMissing skip a missing display, still launch the window"
   assert.ok(!hdmiLaunch.monitor)
 })
 
+test("47 windowPanes follow dwindle and scrolling geometry; icons not names", function() {
+  const scroll = model.windowPanes([
+    { class: "foot", at: [0, 0], size: [400, 800] },
+    { class: "chromium", at: [400, 0], size: [400, 800] }
+  ])
+  assert.strictEqual(scroll.length, 2)
+  assert.ok(Math.abs(scroll[0].x - 0) < 1e-9)
+  assert.ok(Math.abs(scroll[0].w - 0.5) < 1e-9)
+  assert.ok(Math.abs(scroll[1].x - 0.5) < 1e-9)
+  assert.ok(Math.abs(scroll[1].w - 0.5) < 1e-9)
+  assert.strictEqual(scroll[0].icon, "foot")
+  assert.strictEqual(scroll[1].icon, "chromium")
+  const dwindle = model.windowPanes([
+    { class: "dev.zed.Zed", x: 0, y: 0, w: 800, h: 400 },
+    { class: "com.mitchellh.ghostty", x: 0, y: 400, w: 800, h: 400 }
+  ])
+  assert.strictEqual(dwindle.length, 2)
+  assert.ok(Math.abs(dwindle[0].h - 0.5) < 1e-9)
+  assert.ok(Math.abs(dwindle[1].y - 0.5) < 1e-9)
+  assert.strictEqual(dwindle[0].icon, "zed")
+  assert.strictEqual(dwindle[1].icon, "com.mitchellh.ghostty")
+  const stage = model.parseStage(clientsText, workspacesText)
+  assert.ok(stage.windows[0].w > 0)
+  const tiles = model.deskTiles(stage)
+  assert.ok(tiles[0].panes.length >= 1)
+  assert.ok(tiles[0].panes[0].icon)
+  assert.strictEqual(model.iconName({ class: "dev.zed.Zed" }), "zed")
+  assert.strictEqual(model.iconName({ class: "chrome-music.apple.com__-Profile_1" }), "chromium")
+  const recipe = model.snapshotRecipe(stage, "Geom", model.defaultExtras(), 3, "2026-08-21T18:00:00Z")
+  const zed = recipe.workspaces[0].windows[0]
+  assert.ok(zed.w > 0)
+  assert.ok(zed.icon)
+})
+
+test("48 terminal exec keeps cwd and a non-shell command", function() {
+  same(
+    model.terminalExec({
+      class: "com.mitchellh.ghostty",
+      cwd: "/home/hallas/Work/charcana",
+      cmd: ["nvim", "README.md"]
+    }),
+    ["ghostty", "--working-directory=/home/hallas/Work/charcana", "-e", "nvim", "README.md"]
+  )
+  same(
+    model.terminalExec({ class: "foot", cwd: "/tmp", cmd: ["bash"] }),
+    ["foot", "-D", "/tmp"]
+  )
+  same(
+    model.resolveExec({
+      class: "com.mitchellh.ghostty",
+      exec: ["ghostty"],
+      cwd: "/home/hallas/Work",
+      cmd: ["htop"]
+    }),
+    ["ghostty", "--working-directory=/home/hallas/Work", "-e", "htop"]
+  )
+  const hints = model.parseTerminalProbe("1102\t/home/hallas/Work/omadesk\thtop\n1101\t/home/hallas\tbash\n")
+  assert.strictEqual(hints[0].pid, 1102)
+  assert.strictEqual(hints[0].cwd, "/home/hallas/Work/omadesk")
+  same(hints[0].cmd, ["htop"])
+  assert.strictEqual(hints[1].pid, 1101)
+  assert.ok(!hints[1].cmd)
+  const stage = {
+    windows: [
+      { pid: 1102, class: "com.mitchellh.ghostty", workspace: 2, address: "0x1" }
+    ],
+    workspaces: [{ n: 2, windows: [{ pid: 1102, class: "com.mitchellh.ghostty", workspace: 2, address: "0x1" }] }]
+  }
+  model.applyTerminalHints(stage, hints)
+  assert.strictEqual(stage.windows[0].cwd, "/home/hallas/Work/omadesk")
+  same(stage.windows[0].cmd, ["htop"])
+  const recipe = model.snapshotRecipe(stage, "Term", model.defaultExtras(), 2, "2026-08-21T18:00:00Z")
+  const win = recipe.workspaces[0].windows[0]
+  assert.strictEqual(win.cwd, "/home/hallas/Work/omadesk")
+  same(win.cmd, ["htop"])
+  same(win.exec[0], "ghostty")
+  assert.ok(win.exec.indexOf("-e") >= 0)
+  const launched = model.launchMissingPlan({
+    extras: model.defaultExtras(),
+    workspaces: recipe.workspaces
+  }, "[]").launches
+  assert.strictEqual(launched.length, 1)
+  assert.ok(launched[0].exec.indexOf("htop") >= 0)
+})
+
 console.log("ok")
+
 
 

@@ -70,7 +70,7 @@ Item {
   property int gridGap: Style.space(8)
   property int cellWidth: Math.max(1, Math.floor((cardWidth - card.contentLeftInset - card.contentRightInset - gridGap) / 2))
   property int tileColumns: 3
-  property int tileHeight: Style.space(68)
+  property int tileHeight: Style.space(92)
   readonly property string desksDir: (Quickshell.env("HOME") || "") + "/.config/omarchy/omadesk"
   readonly property string desksPath: desksDir + "/desks.json"
   readonly property bool dialogOpen: root.mode !== "picker"
@@ -86,6 +86,8 @@ Item {
     "       ||     ||",
     "      _||     ||_"
   ]
+
+  readonly property string termProbePy: "import os,sys\nfor pid in sys.argv[1:]:\n  try:\n    p=int(pid)\n  except Exception:\n    continue\n  cwd=''\n  try:\n    cwd=os.readlink('/proc/%d/cwd'%p)\n  except Exception:\n    cwd=''\n  cmd=[]\n  children=[]\n  try:\n    children=open('/proc/%d/task/%d/children'%(p,p)).read().split()\n  except Exception:\n    children=[]\n  for c in children:\n    try:\n      raw=open('/proc/%s/cmdline'%c,'rb').read().split(b'\\0')\n      args=[a.decode('utf-8','replace') for a in raw if a]\n    except Exception:\n      args=[]\n    if args:\n      cmd=args\n      break\n  print('\\t'.join([str(p), cwd]+cmd))\n"
 
   function pluginId() {
     return (root.manifest && root.manifest.id) || "com.mdtrr.omadesk"
@@ -284,6 +286,51 @@ Item {
     var title = String(client.title || client.initialTitle || "")
     if (klass && title) return klass + " · " + title
     return title || klass
+  }
+
+  function iconSource(iconOrWin) {
+    var names = []
+    if (iconOrWin && typeof iconOrWin === "object") {
+      if (iconOrWin.icon) names.push(String(iconOrWin.icon))
+      if (typeof Model.iconNames === "function") {
+        try {
+          var extra = Model.iconNames(iconOrWin) || []
+          var e
+          for (e = 0; e < extra.length; e++) names.push(extra[e])
+        } catch (err) {}
+      }
+      if (iconOrWin.class) names.push(String(iconOrWin.class))
+    } else if (iconOrWin) {
+      names.push(String(iconOrWin))
+    }
+    var i
+    for (i = 0; i < names.length; i++) {
+      if (!names[i]) continue
+      var path = Quickshell.iconPath(names[i], true)
+      if (path) return path
+    }
+    return Quickshell.iconPath("application-x-executable", true)
+  }
+
+  function terminalPids(stage) {
+    var out = []
+    var seen = {}
+    function add(win) {
+      if (!win || win.pid == null) return
+      if (typeof Model.isTerminalClass === "function") {
+        try { if (!Model.isTerminalClass(win)) return } catch (e) { return }
+      }
+      var p = Number(win.pid)
+      if (!isFinite(p) || p < 1 || seen[p]) return
+      seen[p] = true
+      out.push(String(p))
+    }
+    var wins = (stage && stage.windows) || []
+    var i
+    for (i = 0; i < wins.length; i++) add(wins[i])
+    var parked = (stage && stage.parked) || []
+    for (i = 0; i < parked.length; i++) add(parked[i])
+    return out
   }
 
   function tilesFrom(source, limit) {
@@ -1309,7 +1356,20 @@ Item {
       }
     }
     root.stage = stage
-    root.rebuildCards()
+    var pids = root.terminalPids(stage)
+    if (!pids.length || termProbeProc.running) {
+      root.completeStage(true)
+      return
+    }
+    var cmd = ["python3", "-c", root.termProbePy]
+    var t
+    for (t = 0; t < pids.length; t++) cmd.push(pids[t])
+    termProbeProc.command = cmd
+    termProbeProc.running = true
+  }
+
+  function completeStage(ok) {
+    if (ok) root.rebuildCards()
     var cb = root.stageCallback
     root.stageCallback = null
     if (root.stageQueued) {
@@ -1317,7 +1377,7 @@ Item {
       root.refreshStage(cb)
       return
     }
-    if (typeof cb === "function") cb(true)
+    if (typeof cb === "function") cb(!!ok)
   }
 
   function handlePickerKey(event) {
@@ -1531,6 +1591,23 @@ Item {
   }
 
   Process {
+    id: termProbeProc
+    stdout: StdioCollector {
+      id: termProbeOut
+      waitForEnd: true
+    }
+    onExited: function(code) {
+      if (code === 0 && typeof Model.parseTerminalProbe === "function" && typeof Model.applyTerminalHints === "function") {
+        try {
+          var hints = Model.parseTerminalProbe(termProbeOut.text || "")
+          Model.applyTerminalHints(root.stage, hints)
+        } catch (e) {}
+      }
+      root.completeStage(true)
+    }
+  }
+
+  Process {
     id: themeListProc
     stdout: StdioCollector {
       id: themeListOut
@@ -1625,6 +1702,7 @@ Item {
     readonly property bool vacant: !!(tile.tileData && tile.tileData.vacant)
     readonly property string tileId: tile.tileData && tile.tileData.id !== undefined ? String(tile.tileData.id) : ""
     readonly property string tileLabel: tile.tileData ? String(tile.tileData.label || (tile.vacant ? "empty" : "")) : ""
+    readonly property var panes: tile.tileData && tile.tileData.panes ? tile.tileData.panes : []
 
     color: tile.vacant ? "transparent" : root.tileFill
     border.width: 1
@@ -1633,31 +1711,67 @@ Item {
     implicitWidth: Style.space(96)
     clip: true
 
-    Column {
+    Item {
+      id: map
+      anchors.fill: parent
+      anchors.margins: Style.space(3)
+      visible: !tile.vacant && tile.panes && tile.panes.length
+
+      Repeater {
+        model: map.visible ? tile.panes : []
+
+        delegate: Rectangle {
+          required property var modelData
+          readonly property real px: Number(modelData && modelData.x)
+          readonly property real py: Number(modelData && modelData.y)
+          readonly property real pw: Number(modelData && modelData.w)
+          readonly property real ph: Number(modelData && modelData.h)
+
+          x: map.width * (isFinite(px) ? px : 0)
+          y: map.height * (isFinite(py) ? py : 0)
+          width: Math.max(Style.space(8), map.width * (isFinite(pw) ? pw : 0) - 1)
+          height: Math.max(Style.space(8), map.height * (isFinite(ph) ? ph : 0) - 1)
+          color: Util.alpha(root.foreground, modelData && modelData.floating ? 0.10 : 0.05)
+          border.width: 1
+          border.color: Util.alpha(root.foreground, 0.28)
+
+          Image {
+            anchors.centerIn: parent
+            width: Math.min(Style.space(22), Math.max(Style.space(10), Math.min(parent.width, parent.height) * 0.55))
+            height: width
+            fillMode: Image.PreserveAspectFit
+            asynchronous: true
+            sourceSize.width: width * Screen.devicePixelRatio
+            sourceSize.height: height * Screen.devicePixelRatio
+            source: root.iconSource(modelData)
+          }
+        }
+      }
+    }
+
+    Text {
+      visible: tile.vacant || !(tile.panes && tile.panes.length)
       anchors.fill: parent
       anchors.margins: Style.space(6)
-      spacing: Style.space(2)
+      text: tile.vacant ? "empty" : tile.tileLabel
+      color: tile.vacant ? root.muted : Util.alpha(root.foreground, 0.78)
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+      wrapMode: Text.Wrap
+      maximumLineCount: 2
+      elide: Text.ElideRight
+      verticalAlignment: Text.AlignVCenter
+    }
 
-      Text {
-        width: parent.width
-        text: tile.tileId
-        color: root.foreground
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.caption
-        font.weight: Font.Medium
-      }
-
-      Text {
-        width: parent.width
-        text: tile.tileLabel
-        color: tile.vacant ? root.muted : Util.alpha(root.foreground, 0.78)
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.caption
-        wrapMode: Text.Wrap
-        maximumLineCount: 2
-        elide: Text.ElideRight
-        clip: true
-      }
+    Text {
+      anchors.left: parent.left
+      anchors.top: parent.top
+      anchors.margins: Style.space(4)
+      text: tile.tileId
+      color: root.foreground
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+      font.weight: Font.Medium
     }
   }
 

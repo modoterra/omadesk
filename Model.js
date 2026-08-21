@@ -115,7 +115,7 @@ function parseStage(clientsJson, workspacesJson, monitorsJson) {
     var client = clients[i]
     var lot = parseParkedLot(client)
     if (lot) {
-      parked.push({
+      parked.push(copyGeom({
         slug: lot.slug,
         n: lot.n,
         address: String(client.address || ""),
@@ -124,12 +124,12 @@ function parseStage(clientsJson, workspacesJson, monitorsJson) {
         title: String(client.title || ""),
         floating: !!client.floating,
         monitor: monitorName(client, workspaces)
-      })
+      }, client))
       continue
     }
     var n = clientWorkspaceN(client)
     if (n < 1 || n > 10) continue
-    var win = {
+    var win = copyGeom({
       address: String(client.address || ""),
       class: String(client.class || ""),
       initialClass: String(client.initialClass || ""),
@@ -137,7 +137,7 @@ function parseStage(clientsJson, workspacesJson, monitorsJson) {
       floating: !!client.floating,
       monitor: monitorName(client, workspaces),
       workspace: n
-    }
+    }, client)
     windows.push(win)
     if (!groups[n]) groups[n] = []
     groups[n].push(win)
@@ -426,8 +426,105 @@ function isUsableExec(argv, win) {
 
 function resolveExec(win) {
   var stored = win && isArray(win.exec) ? copyStrings(win.exec) : []
+  if (isUsableExec(stored, win) && execHasCommand(stored)) return stored
+  if (isTerminalClass(win) && (win.cwd || (isArray(win.cmd) && win.cmd.length) || (typeof win.cmd === "string" && win.cmd))) {
+    var built = terminalExec(win)
+    if (built && built.length) return built
+  }
   if (isUsableExec(stored, win)) return stored
   return guessExec(win)
+}
+
+function isTerminalClass(win) {
+  var cls = String((win && (win.class || win.initialClass)) || (typeof win === "string" ? win : "") || "").toLowerCase()
+  var last = lastClassSegment(cls)
+  return cls.indexOf("ghostty") >= 0 || last === "ghostty" || last === "foot" || last === "alacritty" || last === "kitty" || last === "wezterm" || last === "com.mitchellh.ghostty"
+}
+
+function isShellBin(cmd0) {
+  var b = String(cmd0 || "").split("/")
+  b = String(b[b.length - 1] || "").toLowerCase()
+  return b === "bash" || b === "zsh" || b === "fish" || b === "sh" || b === "nu" || b === "dash"
+}
+
+function execHasCommand(argv) {
+  if (!isArray(argv)) return false
+  var i
+  for (i = 0; i < argv.length; i++) {
+    var a = String(argv[i] || "")
+    if (a === "-e" || a.indexOf("--command") === 0) return true
+  }
+  return false
+}
+
+function safeArgv(list) {
+  var src = list
+  if (typeof list === "string" && list) src = [list]
+  if (!isArray(src)) return []
+  var out = []
+  var i
+  for (i = 0; i < src.length; i++) {
+    var s = String(src[i] == null ? "" : src[i])
+    if (!s || /[\n\r]/.test(s)) continue
+    out.push(s)
+  }
+  return out
+}
+
+function terminalExec(win) {
+  var base = guessExec(win)
+  if (!isArray(base) || !base.length) return []
+  var out = copyStrings(base)
+  var bin = String(out[0] || "")
+  var cwd = String((win && win.cwd) || "")
+  if (cwd && !/[\n\r]/.test(cwd)) {
+    if (bin === "ghostty") out.push("--working-directory=" + cwd)
+    else if (bin === "foot") { out.push("-D"); out.push(cwd) }
+    else if (bin === "alacritty") { out.push("--working-directory"); out.push(cwd) }
+    else if (bin === "kitty") { out.push("--directory"); out.push(cwd) }
+  }
+  var cmd = safeArgv(win && win.cmd)
+  if (cmd.length && isShellBin(cmd[0])) cmd = []
+  if (cmd.length) {
+    if (bin === "kitty") out = out.concat(cmd)
+    else {
+      out.push("-e")
+      out = out.concat(cmd)
+    }
+  }
+  return out
+}
+
+function iconName(win) {
+  var names = iconNames(win)
+  return names.length ? names[0] : ""
+}
+
+function iconNames(win) {
+  var cls = String((win && (win.class || win.initialClass)) || "")
+  var lower = cls.toLowerCase()
+  var last = lastClassSegment(lower)
+  var out = []
+  var mapped = mappedIcon(lower, last)
+  if (mapped) out.push(mapped)
+  if (cls && out.indexOf(cls) === -1) out.push(cls)
+  if (last && out.indexOf(last) === -1) out.push(last)
+  return out
+}
+
+function mappedIcon(lower, last) {
+  var s = String(lower || "")
+  var tail = String(last || "")
+  if (s.indexOf("geforce") >= 0) return "com.nvidia.geforcenow"
+  if (s.indexOf("chrome-") === 0) return "chromium"
+  if (s.indexOf("ghostty") >= 0 || tail === "ghostty") return "com.mitchellh.ghostty"
+  if (tail === "zed") return "zed"
+  if (tail === "chromium" || tail === "chrome" || tail === "google-chrome") return "chromium"
+  if (tail === "firefox" || tail === "firefox-esr") return "firefox"
+  if (tail === "nautilus") return "org.gnome.Nautilus"
+  if (tail === "code" || s === "code - oss") return "code"
+  if (s.indexOf("obsproject") >= 0) return "com.obsproject.Studio"
+  return ""
 }
 
 function snapshotRecipe(stage, name, extras, lastWorkspace, nowIso) {
@@ -821,7 +918,7 @@ function parkedToStage(parked) {
   for (i = 0; i < parked.length; i++) {
     var p = parked[i] || {}
     n = Number(p.n)
-    var win = {
+    var win = copyGeom({
       address: p.address,
       class: p.class,
       initialClass: p.initialClass,
@@ -829,7 +926,7 @@ function parkedToStage(parked) {
       floating: !!p.floating,
       monitor: p.monitor,
       workspace: n
-    }
+    }, p)
     windows.push(win)
     if (n >= 1 && n <= 10) {
       if (!groups[n]) groups[n] = []
@@ -1203,7 +1300,7 @@ function stageWindows(stage) {
     var wins = (wss[i] && wss[i].windows) || []
     for (j = 0; j < wins.length; j++) {
       var w = wins[j] || {}
-      out.push({
+      out.push(copyGeom({
         address: w.address,
         class: w.class,
         initialClass: w.initialClass,
@@ -1211,7 +1308,7 @@ function stageWindows(stage) {
         floating: w.floating,
         monitor: w.monitor,
         workspace: w.workspace != null ? w.workspace : n
-      })
+      }, w))
     }
   }
   return out
@@ -1309,6 +1406,14 @@ function normalizeRecipeWindow(w) {
     monitor: String(src.monitor || "")
   }
   if (src.address) rec.address = String(src.address)
+  copyGeom(rec, src)
+  delete rec.pid
+  var cwd = String(src.cwd || "")
+  if (cwd && !/[\n\r]/.test(cwd)) rec.cwd = cwd
+  var cmd = safeArgv(src.cmd)
+  if (cmd.length && !isShellBin(cmd[0])) rec.cmd = cmd
+  var icon = iconName(src)
+  if (icon) rec.icon = icon
   return rec
 }
 
@@ -1430,9 +1535,159 @@ function deskTiles(desk, limit) {
   var tiles = []
   for (n = 1; n <= last; n++) {
     var label = tileLabel(byN[n])
-    tiles.push({ id: n, n: n, label: label, vacant: label === "empty" })
+    var wins = byN[n] && byN[n].windows ? byN[n].windows : []
+    tiles.push({
+      id: n,
+      n: n,
+      label: label,
+      vacant: label === "empty",
+      panes: windowPanes(wins)
+    })
   }
   return tiles
+}
+
+function windowGeom(win) {
+  if (!win) return null
+  var x = win.x
+  var y = win.y
+  var w = win.w
+  var h = win.h
+  if ((x == null || !isFinite(Number(x))) && isArray(win.at) && win.at.length >= 2) {
+    x = win.at[0]
+    y = win.at[1]
+  }
+  if ((w == null || !isFinite(Number(w))) && isArray(win.size) && win.size.length >= 2) {
+    w = win.size[0]
+    h = win.size[1]
+  }
+  x = Number(x)
+  y = Number(y)
+  w = Number(w)
+  h = Number(h)
+  if (!isFinite(x) || !isFinite(y) || !isFinite(w) || !isFinite(h) || w < 1 || h < 1) return null
+  return { x: x, y: y, w: w, h: h }
+}
+
+function windowPanes(windows) {
+  var list = isArray(windows) ? windows : []
+  var geoms = []
+  var i
+  var minX = Infinity
+  var minY = Infinity
+  var maxX = -Infinity
+  var maxY = -Infinity
+  for (i = 0; i < list.length; i++) {
+    var g = windowGeom(list[i])
+    if (!g) continue
+    geoms.push({ win: list[i], x: g.x, y: g.y, w: g.w, h: g.h })
+    if (g.x < minX) minX = g.x
+    if (g.y < minY) minY = g.y
+    if (g.x + g.w > maxX) maxX = g.x + g.w
+    if (g.y + g.h > maxY) maxY = g.y + g.h
+  }
+  var bw = maxX - minX
+  var bh = maxY - minY
+  var panes = []
+  if (!geoms.length || !(bw > 0) || !(bh > 0)) {
+    var n = list.length
+    if (!n) return panes
+    for (i = 0; i < n; i++) {
+      panes.push(paneRecord(list[i], i / n, 0, 1 / n, 1))
+    }
+    return panes
+  }
+  for (i = 0; i < geoms.length; i++) {
+    panes.push(paneRecord(
+      geoms[i].win,
+      (geoms[i].x - minX) / bw,
+      (geoms[i].y - minY) / bh,
+      geoms[i].w / bw,
+      geoms[i].h / bh
+    ))
+  }
+  return panes
+}
+
+function paneRecord(win, x, y, w, h) {
+  return {
+    x: x,
+    y: y,
+    w: w,
+    h: h,
+    icon: iconName(win),
+    class: String((win && (win.class || win.initialClass)) || ""),
+    floating: !!(win && win.floating)
+  }
+}
+
+function copyGeom(dst, src) {
+  if (!dst) dst = {}
+  if (!src) return dst
+  var g = windowGeom(src)
+  if (g) {
+    dst.x = g.x
+    dst.y = g.y
+    dst.w = g.w
+    dst.h = g.h
+  }
+  var pid = src.pid != null ? Number(src.pid) : NaN
+  if (isFinite(pid) && pid > 0) dst.pid = pid
+  if (src.cwd) dst.cwd = String(src.cwd)
+  var cmd = safeArgv(src.cmd)
+  if (cmd.length) dst.cmd = cmd
+  return dst
+}
+
+function parseTerminalProbe(text) {
+  var lines = String(text || "").split(/\r?\n/)
+  var out = []
+  var i
+  for (i = 0; i < lines.length; i++) {
+    var line = lines[i]
+    if (!line) continue
+    var parts = line.split("\t")
+    if (parts.length < 2) continue
+    var pid = Number(parts[0])
+    if (!isFinite(pid) || pid < 1) continue
+    var cwd = String(parts[1] || "")
+    var cmd = []
+    if (parts.length > 2 && parts[2]) cmd = safeArgv(parts.slice(2))
+    if (cmd.length && isShellBin(cmd[0])) cmd = []
+    var row = { pid: pid }
+    if (cwd && cwd.charAt(0) === "/") row.cwd = cwd
+    if (cmd.length) row.cmd = cmd
+    out.push(row)
+  }
+  return out
+}
+
+function applyTerminalHints(stage, hints) {
+  if (!stage) return stage
+  var byPid = {}
+  var list = isArray(hints) ? hints : []
+  var i
+  for (i = 0; i < list.length; i++) {
+    if (list[i] && list[i].pid) byPid[Number(list[i].pid)] = list[i]
+  }
+  function stamp(win) {
+    if (!win || win.pid == null) return
+    var hint = byPid[Number(win.pid)]
+    if (!hint) return
+    if (hint.cwd) win.cwd = String(hint.cwd)
+    if (isArray(hint.cmd) && hint.cmd.length) win.cmd = copyStrings(hint.cmd)
+  }
+  var wins = stage.windows || []
+  for (i = 0; i < wins.length; i++) stamp(wins[i])
+  var parked = stage.parked || []
+  for (i = 0; i < parked.length; i++) stamp(parked[i])
+  var wss = stage.workspaces || []
+  var j
+  for (i = 0; i < wss.length; i++) {
+    var ww = (wss[i] && wss[i].windows) || []
+    for (j = 0; j < ww.length; j++) stamp(ww[j])
+  }
+  return stage
 }
 
 function parkedForSlug(stage, slug) {
@@ -1571,7 +1826,7 @@ function snapshotWorkspaces(stage) {
 
 function recipeFromStageWindow(w) {
   var src = w || {}
-  return {
+  return copyGeom({
     address: src.address ? String(src.address) : "",
     class: String(src.class || ""),
     initialClass: String(src.initialClass || src.class || ""),
@@ -1579,7 +1834,7 @@ function recipeFromStageWindow(w) {
     exec: isArray(src.exec) && src.exec.length ? copyStrings(src.exec) : guessExec(src),
     floating: !!src.floating,
     monitor: String(src.monitor || "")
-  }
+  }, src)
 }
 
 function recipeWindow(cls, title, exec) {
