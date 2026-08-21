@@ -68,9 +68,10 @@ o.bind("SUPER + D", "Desks", "omarchy-shell shell toggle com.mdtrr.omadesk")
 | Key | Action |
 | --- | --- |
 | Super+D | toggle overlay |
-| type | filter |
+| / | start filter (Esc leaves) |
 | j / k, arrows, h l | move cursor |
 | 1–9 | jump to card |
+| click a workspace tile | switch onto that workspace |
 | enter | switch, return to **Unsaved**, or start an empty unsaved desk on **+ new desk** |
 | n | save current as a named desk |
 | s | update desk you are on |

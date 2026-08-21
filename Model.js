@@ -1117,6 +1117,16 @@ function monitorName(client, workspaces) {
   return String(client.monitor)
 }
 
+function switchFocusWorkspace(desk, clickedN) {
+  var n = focusWorkspaceN(clickedN)
+  if (n) return n
+  n = focusWorkspaceN(desk && desk.lastWorkspace)
+  if (n) return n
+  n = focusWorkspaceN(desk && desk.recipe && desk.recipe.lastWorkspace)
+  if (n) return n
+  return 1
+}
+
 function pickLastWorkspace(workspaces, occupied, layout) {
   var i
   if (isArray(layout)) {
@@ -1611,6 +1621,16 @@ function tileLabel(ws) {
   return label
 }
 
+function workspaceTileN(ws, cap) {
+  var n = Number(ws && ws.n)
+  if (n >= 1 && n <= cap) return n
+  n = Number(ws && ws.workspace)
+  if (n >= 1 && n <= cap) return n
+  n = numberedWorkspaceId(ws)
+  if (n >= 1 && n <= cap) return n
+  return 0
+}
+
 function deskTiles(desk, limit) {
   var cap = Number(limit)
   if (!isFinite(cap) || cap < 1) cap = 10
@@ -1620,28 +1640,34 @@ function deskTiles(desk, limit) {
   var i
   var n
   for (i = 0; i < list.length; i++) {
-    n = Number(list[i].n)
-    if (n >= 1 && n <= cap) byN[n] = list[i]
+    n = workspaceTileN(list[i], cap)
+    if (n) byN[n] = list[i]
   }
-  if ((!list || !list.length) && desk && isArray(desk.windows)) {
+  var listed = false
+  for (n = 1; n <= cap; n++) {
+    if (byN[n] && isArray(byN[n].windows)) {
+      listed = true
+      break
+    }
+  }
+  if (!listed && desk && isArray(desk.windows)) {
     for (i = 0; i < desk.windows.length; i++) {
       var wn = Number(desk.windows[i] && desk.windows[i].workspace)
-      if (wn >= 1 && wn <= cap) {
-        if (!byN[wn]) byN[wn] = { n: wn, windows: [] }
-        if (!isArray(byN[wn].windows)) byN[wn].windows = []
-        byN[wn].windows.push(desk.windows[i])
+      if (wn < 1 || wn > cap) continue
+      if (!byN[wn] || !isArray(byN[wn].windows)) {
+        byN[wn] = { n: wn, windows: [], monitor: byN[wn] && byN[wn].monitor }
       }
+      byN[wn].windows.push(desk.windows[i])
     }
   }
   var sizes = (desk && desk.monitorSizes) || {}
   var tiles = []
   for (n = 1; n <= cap; n++) {
-    var wins = byN[n] && byN[n].windows ? byN[n].windows : []
+    var wins = byN[n] && isArray(byN[n].windows) ? byN[n].windows : []
     if (!wins.length) continue
     var label = tileLabel(byN[n])
     var layout = paneLayout(wins)
     tiles.push({
-      id: n,
       n: n,
       label: label,
       vacant: false,

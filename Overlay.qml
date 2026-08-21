@@ -14,6 +14,7 @@ Item {
   property bool opened: false
   property string mode: "picker"
   property string filterText: ""
+  property bool filterOpen: false
   property int cursorIndex: 0
   property var desksState: ({ version: 1, currentId: null, desks: [] })
   property var cards: []
@@ -40,6 +41,7 @@ Item {
   property var pendingFocusWs: ""
   property var pendingDnd: ""
   property string switchToId: ""
+  property var pendingFocusN: null
   property bool leavingForFresh: false
   property bool restoringUnsaved: false
   property var pendingDesk: null
@@ -105,6 +107,7 @@ Item {
     root.opened = true
     root.mode = "picker"
     root.filterText = ""
+    root.filterOpen = false
     root.cursorIndex = 0
     root.busy = false
     root.reloadDesksFile()
@@ -151,8 +154,18 @@ Item {
 
   function applyEscape() {
     if (root.dialogOpen) root.cancelDialog()
-    else if (root.filterText) root.setFilter("")
+    else if (root.filterOpen || root.filterText) root.closeFilter()
     else root.dismiss()
+  }
+
+  function openFilter() {
+    root.filterOpen = true
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function closeFilter() {
+    root.filterOpen = false
+    root.setFilter("")
   }
 
   function setFilter(text) {
@@ -344,7 +357,7 @@ Item {
     if (typeof Model.previewTiles === "function") {
       try {
         var preview = Model.previewTiles(source, limit)
-        if (Array.isArray(preview) && preview.length) return preview
+        if (Array.isArray(preview)) return preview
       } catch (e) {}
     }
     if (Array.isArray(source.tiles) && source.tiles.length)
@@ -355,20 +368,20 @@ Item {
       spaces = source.recipe.workspaces
     if (!Array.isArray(spaces)) spaces = []
 
-    var max = limit || Math.min(10, Math.max(spaces.length, 5))
     var out = []
-    for (var i = 0; i < max; i++) {
+    var i
+    for (i = 0; i < spaces.length; i++) {
       var ws = spaces[i] || null
-      var id = ws && (ws.id !== undefined ? ws.id : ws.workspace)
-      if (id === undefined) id = i + 1
-      var clients = (ws && (ws.clients || ws.windows)) || []
+      var clients = (ws && Array.isArray(ws.windows) && ws.windows) || (ws && ws.clients) || []
+      if (!Array.isArray(clients) || !clients.length) continue
+      var n = ws.n != null ? Number(ws.n) : Number(ws.workspace)
+      if (!(n >= 1 && n <= 10)) continue
       var parts = []
       for (var c = 0; c < clients.length; c++) {
         var piece = root.tileLabel(clients[c])
         if (piece) parts.push(piece)
       }
-      var vacant = parts.length === 0
-      out.push({ id: id, label: vacant ? "empty" : parts.join(" · "), vacant: vacant })
+      out.push({ n: n, label: parts.join(" · "), vacant: false })
     }
     return out
   }
@@ -925,8 +938,29 @@ Item {
     })
   }
 
-  function switchToUnsaved() {
+  function clickedWorkspaceN(value) {
+    if (typeof Model.focusWorkspaceN === "function") {
+      try {
+        var n = Model.focusWorkspaceN(value)
+        if (n) return n
+      } catch (e) {}
+    }
+    var raw = Number(value)
+    if (raw >= 1 && raw <= 10) return raw
+    return null
+  }
+
+  function focusWorkspaceNow(n) {
+    if (n == null || n === "") return
+    var lua = root.focusDispatch(String(n))
+    if (!lua) return
+    Quickshell.execDetached(["hyprctl", "dispatch", lua])
+  }
+
+  function switchToUnsaved(workspaceN) {
     if (root.busy) return
+    var clicked = root.clickedWorkspaceN(workspaceN)
+    root.pendingFocusN = clicked
     root.busy = true
     root.targetDesk = null
     root.pendingDesk = null
@@ -937,6 +971,7 @@ Item {
       if (!ok) {
         root.busy = false
         root.restoringUnsaved = false
+        root.pendingFocusN = null
         return
       }
       if (root.desksState && root.desksState.currentId) {
@@ -956,8 +991,10 @@ Item {
       }
       var onStage = (root.stage && root.stage.windows) ? root.stage.windows : []
       if (!parked.length || (onStage && onStage.length)) {
+        if (clicked != null) root.focusWorkspaceNow(clicked)
         root.busy = false
         root.restoringUnsaved = false
+        root.pendingFocusN = null
         root.dismiss()
         return
       }
@@ -975,10 +1012,12 @@ Item {
       if (!restoreBatch) {
         root.busy = false
         root.restoringUnsaved = false
+        root.pendingFocusN = null
         root.dismiss()
         return
       }
-      root.pendingFocusWs = lastWs
+      root.pendingFocusWs = clicked != null ? String(clicked) : lastWs
+      root.pendingFocusN = null
       root.pendingDnd = ""
       root.pendingTheme = ""
       root.pendingLaunches = []
@@ -1034,9 +1073,13 @@ Item {
     })
   }
 
-  function switchTo(desk) {
+  function switchTo(desk, workspaceN) {
     if (!desk || desk.kind === "new" || root.busy) return
+    var clicked = root.clickedWorkspaceN(workspaceN)
+    root.pendingFocusN = clicked
     if (root.desksState && String(root.desksState.currentId) === String(desk.id)) {
+      if (clicked != null) root.focusWorkspaceNow(clicked)
+      root.pendingFocusN = null
       root.dismiss()
       return
     }
@@ -1046,6 +1089,7 @@ Item {
     root.refreshStage(function(ok) {
       if (!ok) {
         root.busy = false
+        root.pendingFocusN = null
         return
       }
       root.runParkRestore(root.currentSlug(), String(desk.id), desk)
@@ -1082,15 +1126,18 @@ Item {
     // (`--new-window` if we have it).
     if (typeof Model.parkPlan !== "function") {
       root.busy = false
+      root.pendingFocusN = null
       return
     }
     var plan = null
     try { plan = Model.parkPlan(root.stage, fromSlug, toSlug, desk) } catch (e) {
       root.busy = false
+      root.pendingFocusN = null
       return
     }
     if (!plan) {
       root.busy = false
+      root.pendingFocusN = null
       return
     }
 
@@ -1107,7 +1154,11 @@ Item {
       try { restoreBatch = root.batchString(Model.restorePlan(root.stage, toSlug, desk)) } catch (e) { restoreBatch = "" }
     }
 
-    root.pendingFocusWs = String(root.lastWorkspaceOf(desk, plan))
+    if (root.pendingFocusN != null && root.pendingFocusN !== "")
+      root.pendingFocusWs = String(root.pendingFocusN)
+    else
+      root.pendingFocusWs = String(root.lastWorkspaceOf(desk, plan))
+    root.pendingFocusN = null
     root.pendingDnd = ""
     root.pendingTheme = ""
     root.pendingLaunches = []
@@ -1143,6 +1194,7 @@ Item {
       root.busy = false
       root.leavingForFresh = false
       root.restoringUnsaved = false
+      root.pendingFocusN = null
       return
     }
     batchProc.command = ["hyprctl", "--batch", batch]
@@ -1156,6 +1208,7 @@ Item {
       root.leavingForFresh = false
       root.restoringUnsaved = false
       root.pendingForgetId = ""
+      root.pendingFocusN = null
       return
     }
     if (phase === "park") {
@@ -1313,6 +1366,7 @@ Item {
     root.pendingTheme = ""
     root.pendingDesk = null
     root.switchToId = ""
+    root.pendingFocusN = null
     root.leavingForFresh = false
     root.restoringUnsaved = false
     root.dismiss()
@@ -1390,14 +1444,35 @@ Item {
     if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
       root.activateHighlighted()
       event.accepted = true
-    } else if (event.key === Qt.Key_Delete) {
+      return
+    }
+    if ((event.key === Qt.Key_Slash || event.text === "/") && !root.filterOpen) {
+      root.openFilter()
+      event.accepted = true
+      return
+    }
+    if (root.filterOpen) {
+      if (Util.editsFilter(event, root.filterText)) {
+        root.setFilter(Util.editedFilter(event, root.filterText))
+        event.accepted = true
+        return
+      }
+      if (event.text && event.text.length === 1 && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127) {
+        if (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) return
+        root.setFilter(root.filterText + event.text)
+        event.accepted = true
+        return
+      }
+      if (event.key === Qt.Key_Delete) {
+        event.accepted = true
+        return
+      }
+    }
+    if (event.key === Qt.Key_Delete && !root.filterOpen) {
       root.openForget()
       event.accepted = true
-    } else if (event.key === Qt.Key_Backspace && !root.filterText) {
+    } else if (event.key === Qt.Key_Backspace && !root.filterOpen) {
       root.openForget()
-      event.accepted = true
-    } else if (Util.editsFilter(event, root.filterText)) {
-      root.setFilter(Util.editedFilter(event, root.filterText))
       event.accepted = true
     } else if (event.key === Qt.Key_Down) {
       root.moveCursor(0, 1)
@@ -1411,43 +1486,38 @@ Item {
     } else if (event.key === Qt.Key_Right) {
       root.moveCursor(1, 0)
       event.accepted = true
-    } else if (event.key >= Qt.Key_1 && event.key <= Qt.Key_9 && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))) {
+    } else if (!root.filterOpen && event.key >= Qt.Key_1 && event.key <= Qt.Key_9 && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))) {
       root.jumpCursor(event.key - Qt.Key_0)
       event.accepted = true
-    } else if (event.text === "j") {
+    } else if (!root.filterOpen && event.text === "j") {
       root.moveCursor(0, 1)
       event.accepted = true
-    } else if (event.text === "k") {
+    } else if (!root.filterOpen && event.text === "k") {
       root.moveCursor(0, -1)
       event.accepted = true
-    } else if (event.text === "h") {
+    } else if (!root.filterOpen && event.text === "h") {
       root.moveCursor(-1, 0)
       event.accepted = true
-    } else if (event.text === "l") {
+    } else if (!root.filterOpen && event.text === "l") {
       root.moveCursor(1, 0)
       event.accepted = true
-    } else if (!root.filterText && event.text === "n") {
+    } else if (!root.filterOpen && event.text === "n") {
       root.openSave()
       event.accepted = true
-    } else if (!root.filterText && event.text === "s") {
+    } else if (!root.filterOpen && event.text === "s") {
       root.updateHere()
       event.accepted = true
-    } else if (!root.filterText && event.text === "r") {
+    } else if (!root.filterOpen && event.text === "r") {
       root.openRename()
       event.accepted = true
-    } else if (!root.filterText && event.text === "e") {
+    } else if (!root.filterOpen && event.text === "e") {
       root.openExtras()
       event.accepted = true
-    } else if (!root.filterText && event.text === "x") {
+    } else if (!root.filterOpen && event.text === "x") {
       root.openClose()
       event.accepted = true
-    } else if (!root.filterText && event.text === "o") {
+    } else if (!root.filterOpen && event.text === "o") {
       root.wakeHighlighted()
-      event.accepted = true
-    } else if (event.text && event.text.length === 1 && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127) {
-      if (root.pickerEmpty) return
-      if (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) return
-      root.setFilter(root.filterText + event.text)
       event.accepted = true
     }
   }
@@ -1704,9 +1774,16 @@ Item {
     id: tile
     property var tileData: ({})
     property bool compact: false
+    property bool clickable: false
+    signal activated()
 
     readonly property bool vacant: !!(tile.tileData && tile.tileData.vacant)
-    readonly property string tileId: tile.tileData && tile.tileData.id !== undefined ? String(tile.tileData.id) : ""
+    readonly property string tileId: {
+      var d = tile.tileData || ({})
+      var n = Number(d.n)
+      if (n >= 1 && n <= 10) return String(n)
+      return ""
+    }
     readonly property string tileLabel: tile.tileData ? String(tile.tileData.label || (tile.vacant ? "empty" : "")) : ""
     readonly property var panes: tile.tileData && tile.tileData.panes ? tile.tileData.panes : []
     readonly property var under: tile.tileData && tile.tileData.under ? tile.tileData.under : []
@@ -1879,6 +1956,7 @@ Item {
     }
 
     Text {
+      visible: tile.tileId !== ""
       x: tile.numberInset
       y: tile.numberInset
       z: 2
@@ -1887,6 +1965,16 @@ Item {
       font.family: root.fontFamily
       font.pixelSize: Style.font.caption
       font.weight: Font.Medium
+    }
+
+    MouseArea {
+      anchors.fill: parent
+      enabled: tile.clickable
+      hoverEnabled: tile.clickable
+      cursorShape: tile.clickable ? Qt.PointingHandCursor : Qt.ArrowCursor
+      z: 3
+      preventStealing: true
+      onClicked: tile.activated()
     }
   }
 
@@ -2003,7 +2091,7 @@ Item {
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
             visible: (root.mode === "picker" && !root.pickerEmpty) || root.mode === "extras"
-            text: root.mode === "extras" ? (root.extrasPickingTheme ? "pick a theme" : "desk extras") : (root.filterText || "type to filter")
+            text: root.mode === "extras" ? (root.extrasPickingTheme ? "pick a theme" : "desk extras") : (root.filterOpen ? "/" + (root.filterText || "") : "type / to filter")
             color: root.muted
             font.family: root.fontFamily
             font.pixelSize: root.mode === "extras" ? Style.font.caption : (root.filterText ? Style.font.heading : Style.font.bodySmall)
@@ -2080,6 +2168,7 @@ Item {
               required property var modelData
 
               readonly property var card: modelData || ({})
+              readonly property int cardIndex: index
               readonly property bool isNew: card.kind === "new"
               readonly property bool isUnsaved: card.kind === "unsaved"
               readonly property bool hasCursor: index === root.cursorIndex
@@ -2204,6 +2293,17 @@ Item {
                       width: Math.floor((parent.width - Style.space(6) * (root.tileColumns - 1)) / root.tileColumns)
                       height: implicitHeight
                       tileData: modelData
+                      clickable: !isNew
+                      onActivated: {
+                        root.cursorIndex = cardIndex
+                        var n = modelData && modelData.n
+                        if (isUnsaved) {
+                          root.switchToUnsaved(n)
+                          return
+                        }
+                        var desk = root.deskById(card.id) || card.desk
+                        root.switchTo(desk, n)
+                      }
                     }
                   }
                 }
@@ -2246,6 +2346,7 @@ Item {
 
               MouseArea {
                 anchors.fill: parent
+                z: -1
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
                 onContainsMouseChanged: if (containsMouse) root.cursorIndex = index

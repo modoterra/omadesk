@@ -1462,6 +1462,56 @@ test("50 minimap aspect matches the monitor", function() {
   assert.ok(Math.abs(model.aspectForMonitor("eDP-1", portrait) - 1080 / 1920) < 1e-9)
 })
 
+test("51 switchFocusWorkspace prefers the clicked workspace", function() {
+  assert.strictEqual(model.switchFocusWorkspace({ lastWorkspace: 3 }, 7), 7)
+  assert.strictEqual(model.switchFocusWorkspace({ lastWorkspace: 3 }, "5"), 5)
+  assert.strictEqual(model.switchFocusWorkspace({ lastWorkspace: 3 }, null), 3)
+  assert.strictEqual(model.switchFocusWorkspace({ recipe: { lastWorkspace: 4 } }, "x"), 4)
+  assert.strictEqual(model.switchFocusWorkspace({ lastWorkspace: 11 }, 0), 1)
+  assert.strictEqual(model.switchFocusWorkspace({}, undefined), 1)
+  assert.strictEqual(model.focusWorkspaceN(7), 7)
+  assert.strictEqual(model.focusWorkspaceN("10"), 10)
+  assert.strictEqual(model.focusWorkspaceN(0), null)
+  assert.strictEqual(model.focusWorkspaceN("null"), null)
+})
+
+test("52 live tiles use n not id and skip empty workspaces", function() {
+  const stage = model.parseStage(clientsText, workspacesText)
+  const tiles = model.deskTiles(stage)
+  assert.strictEqual(tiles.length, 3)
+  assert.strictEqual(model.previewTiles(stage).length, 3)
+  tiles.forEach((t) => {
+    assert.strictEqual(t.vacant, false)
+    assert.ok(t.n >= 1 && t.n <= 10)
+    assert.strictEqual(t.id, undefined)
+  })
+  assert.strictEqual(tiles[0].n, 1)
+  assert.strictEqual(tiles[1].n, 2)
+  assert.strictEqual(tiles[2].n, 3)
+  assert.strictEqual(model.deskTiles({}).length, 0)
+  assert.strictEqual(model.deskTiles({ workspaces: [{ n: 1, windows: 2 }, { n: 8, windows: 0 }] }).length, 0)
+  const hypr = {
+    workspaces: [
+      { id: 1, name: "1", windows: 1, monitor: "DP-1" },
+      { id: 2, name: "2", windows: 1, monitor: "DP-1" },
+      { id: 5, name: "5", windows: 0, monitor: "DP-1" }
+    ],
+    windows: [
+      { class: "foot", workspace: 1, at: [0, 0], size: [400, 400] },
+      { class: "chromium", workspace: 2, at: [0, 0], size: [400, 400] }
+    ]
+  }
+  const fromHypr = model.deskTiles(hypr)
+  assert.strictEqual(fromHypr.length, 2)
+  assert.strictEqual(fromHypr[0].n, 1)
+  assert.strictEqual(fromHypr[1].n, 2)
+  fromHypr.forEach((t) => {
+    assert.strictEqual(t.vacant, false)
+    assert.strictEqual(t.id, undefined)
+  })
+  assert.strictEqual(hypr.workspaces[0].windows, 1)
+})
+
 console.log("ok")
 
 
