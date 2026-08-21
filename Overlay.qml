@@ -1704,7 +1704,7 @@ Item {
     readonly property string tileLabel: tile.tileData ? String(tile.tileData.label || (tile.vacant ? "empty" : "")) : ""
     readonly property var panes: tile.tileData && tile.tileData.panes ? tile.tileData.panes : []
     readonly property int paneGap: 2
-    readonly property int numberInset: 2
+    readonly property int numberInset: 4
 
     color: tile.vacant ? "transparent" : root.tileFill
     border.width: 1
