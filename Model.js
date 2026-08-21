@@ -186,32 +186,40 @@ function parkSelector(slug, n) {
 }
 
 function moveDispatch(workspaceSelector, address) {
-  var ws = String(workspaceSelector || "")
+  var ws = safeDispatchToken(workspaceSelector)
   var addr = windowSelector(address)
+  if (!ws || !addr) return ""
   return "hl.dsp.window.move({ workspace = \"" + ws + "\", follow = false, window = \"" + addr + "\" })"
 }
 
 function closeDispatch(address) {
   var addr = windowSelector(address)
+  if (!addr) return ""
   return "hl.dsp.window.close({ window = \"" + addr + "\" })"
 }
 
 function focusDispatch(workspaceSelector) {
-  var ws = String(workspaceSelector || "")
+  var ws = safeDispatchToken(workspaceSelector)
+  if (!ws) return ""
   return "hl.dsp.focus({ workspace = \"" + ws + "\" })"
 }
 
 function workspaceMoveDispatch(workspaceSelector, monitor) {
-  var ws = String(workspaceSelector || "")
+  var ws = safeDispatchToken(workspaceSelector)
   var mon = safeMonitor(monitor)
+  if (!ws || !mon) return ""
   return "hl.dsp.workspace.move({ workspace = \"" + ws + "\", monitor = \"" + mon + "\" })"
 }
 
-function safeMonitor(name) {
-  var s = String(name || "")
+function safeDispatchToken(value) {
+  var s = String(value == null ? "" : value)
   if (!s) return ""
   if (/["\\\n\r]/.test(s)) return ""
   return s
+}
+
+function safeMonitor(name) {
+  return safeDispatchToken(name)
 }
 
 function parkPlan(stage, slug, toSlug, desk) {
@@ -239,7 +247,8 @@ function buildParkPlan(stage, slug) {
     var n = Number(win.workspace)
     if (n < 1 || n > 10) continue
     if (!win.address) continue
-    dispatches.push(moveDispatch(parkSelector(clean, n), win.address))
+    var lua = moveDispatch(parkSelector(clean, n), win.address)
+    if (lua) dispatches.push(lua)
   }
   return { slug: clean, dispatches: dispatches, batch: joinBatch(dispatches) }
 }
@@ -253,7 +262,8 @@ function restoreFromPark(park) {
     var ws = /workspace = "(?:special:)?(?:name:)?omadesk-[^"]+-([0-9]+)"/.exec(lua)
     var addr = /window = "(address:[^"]+|0x[^"]+)"/.exec(lua)
     if (!ws || !addr) continue
-    dispatches.push(moveDispatch(ws[1], addr[1]))
+    var back = moveDispatch(ws[1], addr[1])
+    if (back) dispatches.push(back)
   }
   return { slug: park && park.slug ? park.slug : "", dispatches: dispatches, batch: joinBatch(dispatches) }
 }
@@ -268,12 +278,15 @@ function restorePlan(clientsJson, slug, desk) {
     var n = parkedClientLot(client, clean)
     if (!n) continue
     if (!client.address) continue
-    dispatches.push(moveDispatch(String(n), client.address))
+    var lua = moveDispatch(String(n), client.address)
+    if (lua) dispatches.push(lua)
   }
   var connected = []
   if (clientsJson && isArray(clientsJson.monitors)) connected = copyStrings(clientsJson.monitors)
   var layoutMoves = layoutDispatches(desk, connected)
-  for (i = 0; i < layoutMoves.length; i++) dispatches.push(layoutMoves[i])
+  for (i = 0; i < layoutMoves.length; i++) {
+    if (layoutMoves[i]) dispatches.push(layoutMoves[i])
+  }
   return {
     slug: clean,
     dispatches: dispatches,
@@ -491,12 +504,8 @@ function demoDesks() {
   }
 }
 
-function switchPlan(stage, clientsJson, fromSlug, toSlug) {
-  return {
-    park: parkPlan(stage, fromSlug == null || fromSlug === "" ? "unnamed" : fromSlug),
-    restore: restorePlan(clientsJson, toSlug),
-    sequential: true
-  }
+function switchPlan(stage, clientsJson, fromSlug, toSlug, desk) {
+  return parkPlan(stage, fromSlug == null || fromSlug === "" ? "unnamed" : fromSlug, toSlug, desk)
 }
 
 function freshPlan(stage, fromSlug) {
@@ -660,7 +669,26 @@ function forgetDesk(state, deskId) {
 
 function forgetRestorePlan(clientsJson, desk) {
   var slug = desk && typeof desk === "object" ? (desk.id || desk.name) : desk
-  return restorePlan(clientsJson, slug, desk && typeof desk === "object" ? desk : null)
+  // Forgetting unparks onto 1-10 only. Layout moves belong to switching in.
+  return restorePlan(clientsJson, slug, null)
+}
+
+function targetedNamedDesk(card, state) {
+  if (!card || card.kind !== "desk") return null
+  var id = card.id
+  if (id == null || id === "") return null
+  if (state && isArray(state.desks)) {
+    var i
+    for (i = 0; i < state.desks.length; i++) {
+      if (String(state.desks[i].id) === String(id)) return state.desks[i]
+    }
+  }
+  if (card.desk && String(card.desk.id) === String(id)) return card.desk
+  return null
+}
+
+function shouldPersistSwitch(restoreOk, focusOk) {
+  return !!restoreOk
 }
 
 function setExtras(state, deskId, extras) {
@@ -1078,14 +1106,17 @@ function layoutDispatches(desk, connected) {
     var mon = safeMonitor(layout[i].monitor)
     if (!mon) continue
     if (names.length && !allow[mon]) continue
-    out.push(workspaceMoveDispatch(String(layout[i].n), mon))
+    var lua = workspaceMoveDispatch(String(layout[i].n), mon)
+    if (lua) out.push(lua)
   }
   return out
 }
 
 function windowSelector(address) {
   var a = String(address || "")
-  if (a.indexOf("address:") === 0) return a
+  if (a.indexOf("address:") === 0) a = a.slice(8)
+  a = safeDispatchToken(a)
+  if (!a) return ""
   return "address:" + a
 }
 
@@ -1388,7 +1419,8 @@ function closePlan(desk, stage, currentId) {
   for (i = 0; i < wins.length; i++) {
     if (!wins[i] || !wins[i].address) continue
     if (isScratchpadish(wins[i])) continue
-    dispatches.push(closeDispatch(wins[i].address))
+    var lua = closeDispatch(wins[i].address)
+    if (lua) dispatches.push(lua)
   }
   return { slug: desk && desk.id ? String(desk.id) : "", dispatches: dispatches, batch: joinBatch(dispatches) }
 }
@@ -1533,8 +1565,16 @@ function packRead(ok, state, error) {
   return out
 }
 
+function clientWorkspaceName(client) {
+  if (!client) return ""
+  var ws = client.workspace
+  if (ws == null || ws === "") return ""
+  if (typeof ws === "object") return workspaceBareName(ws.name)
+  return workspaceBareName(ws)
+}
+
 function parseParkedLot(client) {
-  var name = workspaceBareName(client && client.workspace && client.workspace.name)
+  var name = clientWorkspaceName(client)
   if (isScratchpadName(name)) return null
   var match = /^omadesk-(.+)-([0-9]+)$/.exec(parkingLotBareName(name))
   if (!match) return null
@@ -1581,7 +1621,7 @@ function parkedClientLot(client, slug) {
     var n = Number(client.n)
     if (n >= 1 && n <= 10) return n
   }
-  var name = workspaceBareName(client && client.workspace && client.workspace.name)
+  var name = clientWorkspaceName(client)
   if (isScratchpadName(name)) return 0
   return lotNumberFromName(name, slug)
 }

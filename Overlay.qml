@@ -438,10 +438,13 @@ Item {
   }
 
   function highlightedDesk() {
+    if (typeof Model.targetedNamedDesk === "function") {
+      try { return Model.targetedNamedDesk(root.highlightedCard(), root.desksState) } catch (e) {}
+    }
     var card = root.highlightedCard()
     if (card && card.kind === "desk")
       return root.deskById(card.id) || card.desk || null
-    return root.deskById(root.desksState ? root.desksState.currentId : null)
+    return null
   }
 
   function moveCursor(dx, dy) {
@@ -761,7 +764,7 @@ Item {
       if (typeof Model.forgetRestorePlan === "function") {
         try { restoreBatch = root.batchString(Model.forgetRestorePlan(root.clientsJson, desk)) } catch (e) { restoreBatch = "" }
       } else if (typeof Model.restorePlan === "function") {
-        try { restoreBatch = root.batchString(Model.restorePlan(root.clientsJson, desk.id, desk)) } catch (e) { restoreBatch = "" }
+        try { restoreBatch = root.batchString(Model.restorePlan(root.clientsJson, desk.id)) } catch (e) { restoreBatch = "" }
       }
       if (restoreBatch) {
         root.pendingRestore = restoreBatch
@@ -1111,11 +1114,16 @@ Item {
 
   function runFocus() {
     var ws = root.pendingFocusWs || "1"
+    var lua = root.focusDispatch(ws)
+    if (!lua) {
+      root.finishSwitch()
+      return
+    }
     if (focusProc.running) {
       root.finishSwitch()
       return
     }
-    focusProc.command = ["hyprctl", "dispatch", root.focusDispatch(ws)]
+    focusProc.command = ["hyprctl", "dispatch", lua]
     focusProc.running = true
   }
 
@@ -1457,11 +1465,12 @@ Item {
   Process {
     id: focusProc
     onExited: function(code) {
-      if (code !== 0) {
-        root.busy = false
-        return
+      var persist = true
+      if (typeof Model.shouldPersistSwitch === "function") {
+        try { persist = !!Model.shouldPersistSwitch(true, code === 0) } catch (e) { persist = true }
       }
-      root.finishSwitch()
+      if (persist) root.finishSwitch()
+      else root.busy = false
     }
   }
 

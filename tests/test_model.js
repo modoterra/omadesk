@@ -366,6 +366,7 @@ test("17 default extras launchMissing true, dnd leave, theme leave", function() 
     "Dazzle Dusk",
     "Tokyo Night"
   ])
+  same(model.parseThemeList("Usage: omarchy theme list\nAether\nAether\n"), ["Aether"])
 })
 
 test("18 cursor h/j/k/l and jump 1-9", function() {
@@ -391,6 +392,8 @@ test("19 sanitizeSlug rejects slashes", function() {
   assert.ok(model.parkLotName("a/b", 1).indexOf("/") === -1)
   assert.strictEqual(model.sanitizeSlug(""), "unnamed")
   assert.strictEqual(model.sanitizeSlug("///"), "unnamed")
+  assert.strictEqual(model.sanitizeSlug("omadesk-Writing"), "writing")
+  assert.strictEqual(model.parkLotName("omadesk-call", 2), "omadesk-call-2")
 })
 
 test("20 extras helpers, cards, currentSlug, guessExec", function() {
@@ -722,5 +725,168 @@ test("28 restore puts workspaces back on their monitors", function() {
   assert.strictEqual(onHdmi.monitor, "HDMI-A-1")
 })
 
-assert.strictEqual(tests, 30)
+test("29 forgetRestorePlan unparks only that desk onto 1-10, never layout", function() {
+  const dualClients = JSON.stringify([
+    {
+      address: "0xdual01",
+      class: "dev.zed.Zed",
+      workspace: { id: -80, name: "special:omadesk-dual-1" }
+    },
+    {
+      address: "0xdual04",
+      class: "chromium",
+      workspace: { id: -81, name: "name:omadesk-dual-4" }
+    },
+    {
+      address: "0xscratch",
+      class: "foot",
+      workspace: { id: -98, name: "special:scratchpad" }
+    },
+    {
+      address: "0xwriting",
+      class: "firefox",
+      workspace: { id: -82, name: "special:omadesk-writing-1" }
+    }
+  ])
+  const dualDesk = {
+    id: "dual",
+    name: "Dual",
+    layout: [
+      { n: 1, monitor: "DP-1", focused: true },
+      { n: 4, monitor: "HDMI-A-1" }
+    ],
+    workspaces: [
+      { n: 1, monitor: "DP-1", windows: [{ class: "dev.zed.Zed", address: "0xdual01" }] },
+      { n: 4, monitor: "HDMI-A-1", windows: [{ class: "chromium", address: "0xdual04" }] }
+    ]
+  }
+  const plan = model.forgetRestorePlan(dualClients, dualDesk)
+  const moves = plan.dispatches.filter((d) => d.indexOf("window.move") >= 0)
+  const layouts = plan.dispatches.filter((d) => d.indexOf("workspace.move") >= 0)
+  assert.strictEqual(moves.length, 2)
+  assert.strictEqual(layouts.length, 0)
+  assert.ok(!plan.layout || plan.layout.length === 0)
+  const one = moves.filter((d) => d.indexOf("0xdual01") >= 0)[0]
+  const four = moves.filter((d) => d.indexOf("0xdual04") >= 0)[0]
+  assert.ok(one.indexOf('workspace = "1"') >= 0)
+  assert.ok(four.indexOf('workspace = "4"') >= 0)
+  plan.dispatches.forEach((lua) => {
+    assert.ok(lua.indexOf("scratchpad") === -1)
+    assert.ok(lua.indexOf("0xscratch") === -1)
+    assert.ok(lua.indexOf("0xwriting") === -1)
+    assert.ok(/workspace = "(?:[1-9]|10)"/.test(lua))
+    assert.ok(lua.indexOf("hl.dsp.window.move({") === 0)
+  })
+  const blob = JSON.stringify(plan)
+  assert.ok(blob.indexOf("scratchpad") === -1)
+  assert.ok(blob.indexOf("workspace.move") === -1)
+  const switched = model.parkPlan(
+    { parked: [], windows: [], monitors: ["DP-1", "HDMI-A-1"] },
+    "writing",
+    "dual",
+    dualDesk
+  )
+  const switchLayouts = switched.restore.dispatches.filter((d) => d.indexOf("workspace.move") >= 0)
+  assert.strictEqual(switchLayouts.length, 2)
+  const oneScreen = model.restorePlan(
+    { parked: [{ slug: "dual", n: 1, address: "0xdual01" }, { slug: "dual", n: 4, address: "0xdual04" }], monitors: ["DP-1"] },
+    "dual",
+    dualDesk
+  )
+  const oneLayout = oneScreen.dispatches.filter((d) => d.indexOf("workspace.move") >= 0)
+  assert.strictEqual(oneLayout.length, 1)
+  assert.ok(oneLayout[0].indexOf("HDMI") === -1)
+  assert.ok(oneLayout[0].indexOf('monitor = "DP-1"') >= 0)
+})
+
+test("30 targetedNamedDesk only resolves a desk card", function() {
+  const state = model.demoDesks()
+  const writing = state.desks.filter((d) => d.id === "writing")[0]
+  const fromDesk = model.targetedNamedDesk({ kind: "desk", id: "writing", desk: writing }, state)
+  assert.strictEqual(fromDesk.id, "writing")
+  assert.strictEqual(fromDesk.name, "Writing")
+  assert.strictEqual(model.targetedNamedDesk({ kind: "new", name: "+ new desk" }, state), null)
+  assert.strictEqual(model.targetedNamedDesk({ kind: "unsaved", name: "Unsaved" }, state), null)
+  assert.strictEqual(model.targetedNamedDesk({ kind: "new", id: "writing" }, state), null)
+  assert.strictEqual(model.targetedNamedDesk({ kind: "unsaved", id: state.currentId }, state), null)
+  assert.strictEqual(model.targetedNamedDesk(null, state), null)
+  assert.strictEqual(model.targetedNamedDesk({ kind: "desk", id: "missing" }, state), null)
+})
+
+test("31 persist switch after restore even if focus fails", function() {
+  assert.strictEqual(model.shouldPersistSwitch(true, false), true)
+  assert.strictEqual(model.shouldPersistSwitch(true, true), true)
+  assert.strictEqual(model.shouldPersistSwitch(false, true), false)
+  assert.strictEqual(model.shouldPersistSwitch(false, false), false)
+  const used = Date.parse("2026-08-20T22:00:00Z")
+  const next = model.useDesk(model.demoDesks(), "call", used)
+  assert.strictEqual(next.currentId, "call")
+  assert.strictEqual(next.desks.filter((d) => d.id === "call")[0].lastUsed, used)
+})
+
+test("32 dispatch quoting rejects quotes and newlines", function() {
+  assert.strictEqual(model.moveDispatch("1", '0x"evil'), "")
+  assert.strictEqual(model.moveDispatch("1", "0x\nABC"), "")
+  assert.strictEqual(model.moveDispatch('ws"x', "0xABC"), "")
+  assert.strictEqual(model.closeDispatch("0x\rABC"), "")
+  assert.strictEqual(model.focusDispatch('3"'), "")
+  assert.strictEqual(model.safeMonitor('DP-"1'), "")
+  assert.strictEqual(model.safeMonitor("HDMI-A-1\n"), "")
+  assert.strictEqual(model.workspaceMoveDispatch("1", 'HDMI"A'), "")
+  const stage = {
+    windows: [{ address: '0x"bad', workspace: 1, class: "foot" }],
+    workspaces: [{ n: 1, windows: [{ address: '0x"bad', class: "foot" }] }]
+  }
+  same(model.parkPlan(stage, "writing").dispatches, [])
+  same(model.closePlan({ id: "writing" }, stage, "writing").dispatches, [])
+  assert.strictEqual(
+    model.moveDispatch("special:omadesk-writing-1", "0xABC"),
+    'hl.dsp.window.move({ workspace = "special:omadesk-writing-1", follow = false, window = "address:0xABC" })'
+  )
+})
+
+test("33 parseParkedLot special: and name: lots; scratchpad stays out", function() {
+  const special = model.parseParkedLot({ workspace: { id: -83, name: "special:omadesk-call-1" } })
+  assert.strictEqual(special.slug, "call")
+  assert.strictEqual(special.n, 1)
+  const named = model.parseParkedLot({ workspace: { id: 13, name: "name:omadesk-call-2" } })
+  assert.strictEqual(named.slug, "call")
+  assert.strictEqual(named.n, 2)
+  const bare = model.parseParkedLot({ workspace: { id: 11, name: "omadesk-writing-1" } })
+  assert.strictEqual(bare.slug, "writing")
+  assert.strictEqual(bare.n, 1)
+  const hyphen = model.parseParkedLot({ workspace: { name: "special:omadesk-my-desk-3" } })
+  assert.strictEqual(hyphen.slug, "my-desk")
+  assert.strictEqual(hyphen.n, 3)
+  const asString = model.parseParkedLot({ workspace: "special:omadesk-call-1" })
+  assert.strictEqual(asString.slug, "call")
+  assert.strictEqual(asString.n, 1)
+  assert.strictEqual(model.parseParkedLot({ workspace: { name: "special:scratchpad" } }), null)
+  assert.strictEqual(model.parseParkedLot({ workspace: { name: "scratchpad" } }), null)
+  const stage = model.parseStage(clientsText, workspacesText)
+  const lots = stage.parked.map((p) => p.slug + ":" + p.n).sort()
+  same(lots, ["call:1", "call:2", "writing:1"])
+  stage.parked.forEach((p) => {
+    assert.ok(p.n >= 1 && p.n <= 10)
+    assert.ok(p.address)
+  })
+  assert.strictEqual(stage.parked.filter((p) => p.address === "0x55f11fe15aaa").length, 0)
+})
+
+test("34 empty and invalid parseStage yield an empty stage", function() {
+  const empty = model.parseStage("", "")
+  same(empty.windows, [])
+  same(empty.parked, [])
+  same(empty.workspaces, [])
+  const bad = model.parseStage("{", "not-json")
+  same(bad.windows, [])
+  same(bad.parked, [])
+  const arr = model.readDesks("[]")
+  assert.strictEqual(arr.ok, false)
+  assert.ok(/invalid JSON/i.test(arr.error))
+  const obj = model.readDesks("{}")
+  assert.strictEqual(obj.ok, false)
+})
+
 console.log("ok")
+
