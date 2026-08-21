@@ -1363,6 +1363,23 @@ test("47 windowPanes follow dwindle and scrolling geometry; icons not names", fu
   ])
   assert.strictEqual(maximized.length, 1)
   assert.strictEqual(maximized[0].icon, "chromium")
+  const stacked = [
+    { class: "foot", x: 0, y: 0, w: 400, h: 400, address: "0xa" },
+    { class: "com.mitchellh.ghostty", x: 0, y: 400, w: 400, h: 400, address: "0xb" },
+    { class: "chromium", x: 0, y: 0, w: 800, h: 800, fullscreen: 2, address: "0xc" }
+  ]
+  const under = model.windowsUnder(stacked)
+  assert.strictEqual(under.length, 2)
+  assert.strictEqual(under[0].icon, "foot")
+  assert.strictEqual(under[1].icon, "com.mitchellh.ghostty")
+  const tile = model.deskTiles({ workspaces: [{ n: 1, windows: stacked }] })[0]
+  assert.strictEqual(tile.panes.length, 1)
+  assert.strictEqual(tile.panes[0].icon, "chromium")
+  assert.strictEqual(tile.under.length, 2)
+  same(model.windowsUnder([
+    { class: "foot", x: 0, y: 0, w: 400, h: 800 },
+    { class: "chromium", x: 400, y: 0, w: 400, h: 800 }
+  ]), [])
 })
 
 test("48 terminal exec keeps cwd and a non-shell command", function() {

@@ -1537,12 +1537,14 @@ function deskTiles(desk, limit) {
   for (n = 1; n <= last; n++) {
     var label = tileLabel(byN[n])
     var wins = byN[n] && byN[n].windows ? byN[n].windows : []
+    var layout = paneLayout(wins)
     tiles.push({
       id: n,
       n: n,
       label: label,
       vacant: label === "empty",
-      panes: windowPanes(wins)
+      panes: layout.panes,
+      under: layout.under
     })
   }
   return tiles
@@ -1571,7 +1573,16 @@ function windowGeom(win) {
 }
 
 function windowPanes(windows) {
+  return paneLayout(windows).panes
+}
+
+function windowsUnder(windows) {
+  return paneLayout(windows).under
+}
+
+function paneLayout(windows) {
   var list = isArray(windows) ? windows : []
+  var empty = { panes: [], under: [] }
   var geoms = []
   var i
   var minX = Infinity
@@ -1590,18 +1601,19 @@ function windowPanes(windows) {
   var bw = maxX - minX
   var bh = maxY - minY
   var panes = []
+  var top = coveringWindow(list, geoms, bw, bh)
+  if (!top) top = coveringWindow(list, [])
+  if (top) {
+    return { panes: [paneRecord(top, 0, 0, 1, 1)], under: underRecords(list, top) }
+  }
   if (!geoms.length || !(bw > 0) || !(bh > 0)) {
-    var cover = coveringWindow(list, [])
-    if (cover) return [paneRecord(cover, 0, 0, 1, 1)]
     var n = list.length
-    if (!n) return panes
+    if (!n) return empty
     for (i = 0; i < n; i++) {
       panes.push(paneRecord(list[i], i / n, 0, 1 / n, 1))
     }
-    return panes
+    return { panes: panes, under: [] }
   }
-  var top = coveringWindow(list, geoms, bw, bh)
-  if (top) return [paneRecord(top, 0, 0, 1, 1)]
   for (i = 0; i < geoms.length; i++) {
     panes.push(paneRecord(
       geoms[i].win,
@@ -1611,7 +1623,24 @@ function windowPanes(windows) {
       geoms[i].h / bh
     ))
   }
-  return panes
+  return { panes: panes, under: [] }
+}
+
+function underRecords(list, top) {
+  var out = []
+  if (!isArray(list) || !top) return out
+  var topAddr = top.address ? stripAddress(top.address) : ""
+  var i
+  for (i = 0; i < list.length; i++) {
+    var win = list[i]
+    if (!win || win === top) continue
+    if (topAddr && win.address && stripAddress(win.address) === topAddr) continue
+    out.push({
+      icon: iconName(win),
+      class: String((win.class || win.initialClass) || "")
+    })
+  }
+  return out
 }
 
 function isFullscreenWin(win) {

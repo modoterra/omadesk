@@ -1703,6 +1703,9 @@ Item {
     readonly property string tileId: tile.tileData && tile.tileData.id !== undefined ? String(tile.tileData.id) : ""
     readonly property string tileLabel: tile.tileData ? String(tile.tileData.label || (tile.vacant ? "empty" : "")) : ""
     readonly property var panes: tile.tileData && tile.tileData.panes ? tile.tileData.panes : []
+    readonly property var under: tile.tileData && tile.tileData.under ? tile.tileData.under : []
+    readonly property bool hasUnder: !tile.vacant && tile.under && tile.under.length > 0
+    readonly property int underStrip: tile.hasUnder ? 22 : 0
     readonly property int paneGap: 2
     readonly property int numberInset: 8
 
@@ -1718,6 +1721,7 @@ Item {
       id: map
       anchors.fill: parent
       anchors.margins: 2
+      anchors.bottomMargin: tile.hasUnder ? tile.underStrip + 2 : 2
       visible: !tile.vacant && tile.panes && tile.panes.length
 
       Repeater {
@@ -1748,6 +1752,43 @@ Item {
             sourceSize.width: width * Screen.devicePixelRatio
             sourceSize.height: height * Screen.devicePixelRatio
             source: root.iconSource(modelData)
+          }
+        }
+      }
+    }
+
+    Item {
+      visible: tile.hasUnder
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.bottom: parent.bottom
+      height: tile.underStrip
+
+      Rectangle {
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        height: 1
+        color: root.borderSoft
+      }
+
+      Row {
+        anchors.centerIn: parent
+        spacing: 6
+
+        Repeater {
+          model: tile.hasUnder ? tile.under : []
+
+          delegate: Image {
+            required property var modelData
+            width: 14
+            height: 14
+            fillMode: Image.PreserveAspectFit
+            asynchronous: true
+            sourceSize.width: width * Screen.devicePixelRatio
+            sourceSize.height: height * Screen.devicePixelRatio
+            source: root.iconSource(modelData)
+            opacity: 0.85
           }
         }
       }
