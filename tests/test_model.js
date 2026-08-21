@@ -1243,6 +1243,43 @@ test("44 restore moves every occupied workspace onto its monitor, including two 
   })
 })
 
+test("45 empty here with unnamed lots is a parked unsaved room, not a live empty one", function() {
+  const state = {
+    version: 1,
+    currentId: null,
+    desks: [{ id: "writing", name: "Writing", extras: model.defaultExtras(), workspaces: [] }]
+  }
+  const stage = {
+    windows: [],
+    parked: [
+      { slug: "unnamed", n: 2, address: "0xunsaved01", class: "foot", title: "notes" },
+      { slug: "writing", n: 1, address: "0xwriting01", class: "dev.zed.Zed" }
+    ]
+  }
+  const cards = model.pickerCards(state, "", stage)
+  const unsaved = cards.filter((c) => c.kind === "unsaved")[0]
+  assert.ok(unsaved)
+  assert.strictEqual(unsaved.here, false)
+  assert.ok(String(unsaved.meta).indexOf("parked") >= 0)
+  const occupied = (unsaved.tiles || []).filter((t) => !t.vacant)
+  assert.ok(occupied.length >= 1)
+  assert.ok(occupied[0].label.indexOf("foot") >= 0 || occupied[0].label.indexOf("notes") >= 0)
+  const restore = model.restorePlan(stage, "unnamed", null)
+  const restoreAddrs = restore.dispatches.join(" ")
+  assert.ok(restoreAddrs.indexOf("0xunsaved01") >= 0)
+  assert.ok(restoreAddrs.indexOf("0xwriting01") === -1)
+  assert.ok(restoreAddrs.indexOf("scratchpad") === -1)
+  assert.ok(/workspace = "2"/.test(restoreAddrs))
+  const stillHere = model.pickerCards(state, "", {
+    windows: [{ address: "0xhere01", workspace: 1, class: "mpv" }],
+    parked: [{ slug: "unnamed", n: 2, address: "0xunsaved01", class: "foot" }]
+  })
+  assert.strictEqual(stillHere.filter((c) => c.kind === "unsaved")[0].here, true)
+  const named = model.demoDesks()
+  const parkedWhileNamed = model.pickerCards(named, "", stage)
+  assert.strictEqual(parkedWhileNamed.filter((c) => c.kind === "unsaved")[0].here, false)
+})
+
 console.log("ok")
 
 

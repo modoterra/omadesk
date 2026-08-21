@@ -874,10 +874,6 @@ Item {
 
   function switchToUnsaved() {
     if (root.busy) return
-    if (!root.desksState || !root.desksState.currentId) {
-      root.dismiss()
-      return
-    }
     root.busy = true
     root.targetDesk = null
     root.pendingDesk = null
@@ -890,7 +886,53 @@ Item {
         root.restoringUnsaved = false
         return
       }
-      root.runParkRestore(root.currentSlug(), "unnamed", null)
+      if (root.desksState && root.desksState.currentId) {
+        root.runParkRestore(root.currentSlug(), "unnamed", null)
+        return
+      }
+      var parked = []
+      if (typeof Model.unnamedParkedWindows === "function") {
+        try { parked = Model.unnamedParkedWindows(root.stage) || [] } catch (e) { parked = [] }
+      }
+      if (!Array.isArray(parked) || !parked.length) {
+        var list = (root.stage && root.stage.parked) ? root.stage.parked : []
+        parked = []
+        for (var i = 0; i < list.length; i++) {
+          if (list[i] && list[i].slug === "unnamed") parked.push(list[i])
+        }
+      }
+      var onStage = (root.stage && root.stage.windows) ? root.stage.windows : []
+      if (!parked.length || (onStage && onStage.length)) {
+        root.busy = false
+        root.restoringUnsaved = false
+        root.dismiss()
+        return
+      }
+      var restoreBatch = ""
+      var lastWs = "1"
+      if (typeof Model.restorePlan === "function") {
+        try { restoreBatch = root.batchString(Model.restorePlan(root.stage, "unnamed", null)) } catch (e) { restoreBatch = "" }
+      }
+      if (typeof Model.parkPlan === "function") {
+        try {
+          var focusPlan = Model.parkPlan(root.stage, "unnamed", "unnamed", null)
+          if (focusPlan && focusPlan.lastWorkspace != null) lastWs = String(focusPlan.lastWorkspace)
+        } catch (e) {}
+      }
+      if (!restoreBatch) {
+        root.busy = false
+        root.restoringUnsaved = false
+        root.dismiss()
+        return
+      }
+      root.pendingFocusWs = lastWs
+      root.pendingDnd = ""
+      root.pendingTheme = ""
+      root.pendingLaunches = []
+      root.pendingDesk = null
+      root.pendingPark = ""
+      root.pendingRestore = restoreBatch
+      root.startBatch(restoreBatch, "restore")
     })
   }
 

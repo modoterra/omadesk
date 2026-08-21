@@ -825,6 +825,9 @@ function unsavedCard(state, stage) {
   var here = !state || state.currentId == null || state.currentId === ""
   var parked = unnamedParkedWindows(stage)
   if (!here && !parked.length) return null
+  // +new parks the untitled room then leaves currentId null; 1-10 is empty
+  // and the windows sit on unnamed lots, so this is a parked unsaved room.
+  if (here && parked.length && !stageWindows(stage).length) here = false
   var tiles = here ? previewTiles(stage) : previewTiles(parkedToStage(parked))
   return {
     kind: "unsaved",
