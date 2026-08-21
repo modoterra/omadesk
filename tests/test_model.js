@@ -1196,6 +1196,53 @@ test("43 unnamed close while here also closes leaked unnamed lots, not named or 
   assert.ok(mixedBlob.indexOf("scratchpad") === -1)
 })
 
+test("44 restore moves every occupied workspace onto its monitor, including two on one display", function() {
+  const desk = {
+    id: "dual",
+    name: "Dual",
+    layout: [
+      { n: 1, monitor: "DP-1", focused: true },
+      { n: 4, monitor: "HDMI-A-1" }
+    ],
+    workspaces: [
+      { n: 1, monitor: "DP-1", windows: [{ class: "dev.zed.Zed", address: "0x1" }] },
+      { n: 2, monitor: "DP-1", windows: [{ class: "com.mitchellh.ghostty", address: "0x2" }] },
+      { n: 4, monitor: "HDMI-A-1", windows: [{ class: "chromium", address: "0x4" }] }
+    ]
+  }
+  const parked = {
+    parked: [
+      { slug: "dual", n: 1, address: "0x1" },
+      { slug: "dual", n: 2, address: "0x2" },
+      { slug: "dual", n: 4, address: "0x4" }
+    ],
+    monitors: ["DP-1", "HDMI-A-1"]
+  }
+  const plan = model.restorePlan(parked, "dual", desk)
+  const layouts = plan.dispatches.filter((d) => d.indexOf("workspace.move") >= 0)
+  assert.strictEqual(layouts.length, 3)
+  assert.strictEqual(layouts.filter((d) => d.indexOf('workspace = "1"') >= 0 && d.indexOf('monitor = "DP-1"') >= 0).length, 1)
+  assert.strictEqual(layouts.filter((d) => d.indexOf('workspace = "2"') >= 0 && d.indexOf('monitor = "DP-1"') >= 0).length, 1)
+  assert.strictEqual(layouts.filter((d) => d.indexOf('workspace = "4"') >= 0 && d.indexOf('monitor = "HDMI-A-1"') >= 0).length, 1)
+  const oneScreen = model.restorePlan({ parked: parked.parked, monitors: ["DP-1"] }, "dual", desk)
+  const oneLayout = oneScreen.dispatches.filter((d) => d.indexOf("workspace.move") >= 0)
+  assert.strictEqual(oneLayout.length, 2)
+  assert.ok(oneLayout.join(" ").indexOf("HDMI") === -1)
+  const emptyConn = model.restorePlan({ parked: parked.parked, monitors: [] }, "dual", desk)
+  assert.strictEqual(emptyConn.dispatches.filter((d) => d.indexOf("workspace.move") >= 0).length, 0)
+  const switched = model.parkPlan(
+    { parked: parked.parked, windows: [], monitors: ["DP-1", "HDMI-A-1"] },
+    "writing",
+    "dual",
+    desk
+  )
+  assert.strictEqual(switched.restore.dispatches.filter((d) => d.indexOf("workspace.move") >= 0).length, 3)
+  emptyConn.dispatches.forEach((lua) => {
+    assert.ok(lua.indexOf("scratchpad") === -1)
+    assert.ok(lua.indexOf("workspace.move") === -1)
+  })
+})
+
 console.log("ok")
 
 

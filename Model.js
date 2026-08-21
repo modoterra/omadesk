@@ -1113,7 +1113,6 @@ function snapshotLayout(stage, workspaces) {
 }
 
 function layoutDispatches(desk, connected) {
-  var layout = deskLayout(desk)
   var allow = {}
   var i
   var names = isArray(connected) ? connected : []
@@ -1122,12 +1121,25 @@ function layoutDispatches(desk, connected) {
     if (nm) allow[nm] = true
   }
   var out = []
-  for (i = 0; i < layout.length; i++) {
-    var mon = safeMonitor(layout[i].monitor)
-    if (!mon) continue
-    if (!allow[mon]) continue
-    var lua = workspaceMoveDispatch(String(layout[i].n), mon)
+  var seenN = {}
+  function add(n, mon) {
+    n = Number(n)
+    mon = safeMonitor(mon)
+    if (!n || n < 1 || n > 10 || !mon) return
+    if (!allow[mon]) return
+    if (seenN[n]) return
+    seenN[n] = true
+    var lua = workspaceMoveDispatch(String(n), mon)
     if (lua) out.push(lua)
+  }
+  var layout = deskLayout(desk)
+  for (i = 0; i < layout.length; i++) add(layout[i].n, layout[i].monitor)
+  var list = deskWorkspaces(desk)
+  for (i = 0; i < list.length; i++) {
+    var ws = list[i]
+    var mon = ws && ws.monitor
+    if (!mon && ws && ws.windows && ws.windows[0]) mon = ws.windows[0].monitor
+    add(ws && ws.n, mon)
   }
   return out
 }
