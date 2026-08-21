@@ -1123,6 +1123,43 @@ test("41 parkPlan skips scratchpad and never emits NaN lots", function() {
   })
 })
 
+test("42 restoring unsaved focuses a restored unnamed workspace, not the outgoing last", function() {
+  const stage = {
+    windows: [{ address: "0xwriting", workspace: 3, class: "dev.zed.Zed" }],
+    parked: [
+      { slug: "unnamed", n: 2, address: "0xunsaved2", class: "foot" },
+      { slug: "unnamed", n: 4, address: "0xunsaved4", class: "com.mitchellh.ghostty" },
+      { slug: "writing", n: 1, address: "0xother", class: "chromium" }
+    ],
+    lastWorkspace: 3
+  }
+  const plan = model.parkPlan(stage, "writing", "unnamed", null)
+  assert.strictEqual(plan.sequential, true)
+  const restoreAddrs = plan.restore.dispatches.join(" ")
+  assert.ok(restoreAddrs.indexOf("0xunsaved2") >= 0)
+  assert.ok(restoreAddrs.indexOf("0xunsaved4") >= 0)
+  assert.ok(restoreAddrs.indexOf("0xwriting") === -1)
+  assert.ok(restoreAddrs.indexOf("0xother") === -1)
+  assert.ok(restoreAddrs.indexOf("scratchpad") === -1)
+  assert.strictEqual(plan.lastWorkspace, 2)
+  assert.notStrictEqual(plan.lastWorkspace, 3)
+  const switched = model.switchPlan(stage, stage, "writing", "unnamed", null)
+  assert.strictEqual(switched.lastWorkspace, 2)
+  const named = model.parkPlan(stage, "unnamed", "writing", {
+    id: "writing",
+    lastWorkspace: 3,
+    workspaces: []
+  })
+  assert.strictEqual(named.lastWorkspace, 3)
+  const badLast = model.parkPlan(stage, "unnamed", "writing", {
+    id: "writing",
+    lastWorkspace: 11,
+    workspaces: []
+  })
+  assert.ok(Number(badLast.lastWorkspace) >= 1 && Number(badLast.lastWorkspace) <= 10)
+  assert.notStrictEqual(Number(badLast.lastWorkspace), 11)
+})
+
 console.log("ok")
 
 

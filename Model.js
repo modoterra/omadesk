@@ -229,12 +229,21 @@ function parkPlan(stage, slug, toSlug, desk) {
   var last = null
   if (desk && desk.lastWorkspace != null) last = desk.lastWorkspace
   else if (desk && desk.recipe && desk.recipe.lastWorkspace != null) last = desk.recipe.lastWorkspace
+  last = focusWorkspaceN(last)
+  if (!last) last = parkedToStage(parkedForSlug(stage, toSlug)).lastWorkspace
+  last = focusWorkspaceN(last) || 1
   return {
     park: park,
     restore: restore,
     sequential: true,
     lastWorkspace: last
   }
+}
+
+function focusWorkspaceN(value) {
+  var n = Number(value)
+  if (isFinite(n) && n >= 1 && n <= 10) return n
+  return null
 }
 
 function buildParkPlan(stage, slug) {
