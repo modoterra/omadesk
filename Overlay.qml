@@ -21,7 +21,8 @@ Item {
   property string nameText: ""
   property var targetDesk: null
   property var extrasDesk: null
-  property var extrasDraft: ({ dnd: "leave", theme: "leave", launchMissing: true })
+  property var extrasDraft: ({ dnd: "leave", theme: "leave", launchMissing: true, showWorkspaces: 5 })
+  property var settings: ({})
   property var forgetDesk: null
   property int forgetIndex: 0
   property var closeDesk: null
@@ -69,8 +70,18 @@ Item {
   property int cardWidth: Math.min(Style.space(680), panel.width - Style.gapsOut * 2)
   property int gridGap: Style.space(8)
   property int cellWidth: Math.max(1, Math.floor((cardWidth - card.contentLeftInset - card.contentRightInset - gridGap) / 2))
-  property int tileColumns: 3
-  property int tileHeight: Style.space(140)
+  property int tileColumns: 2
+  readonly property int showWorkspaces: {
+    var n = null
+    var desk = root.deskById(root.desksState ? root.desksState.currentId : null)
+    if (desk && desk.extras && desk.extras.showWorkspaces != null) n = desk.extras.showWorkspaces
+    else if (root.desksState && root.desksState.showWorkspaces != null) n = root.desksState.showWorkspaces
+    else if (root.settings && root.settings.showWorkspaces != null) n = root.settings.showWorkspaces
+    if (typeof Model.clampShowWorkspaces === "function") {
+      try { return Model.clampShowWorkspaces(n) } catch (e) {}
+    }
+    return 5
+  }
   readonly property string desksDir: (Quickshell.env("HOME") || "") + "/.config/omarchy/omadesk"
   readonly property string desksPath: desksDir + "/desks.json"
   readonly property bool dialogOpen: root.mode !== "picker"
@@ -237,7 +248,10 @@ Item {
     return {
       dnd: dnd,
       theme: theme,
-      launchMissing: launchYes
+      launchMissing: launchYes,
+      showWorkspaces: typeof Model.clampShowWorkspaces === "function"
+        ? Model.clampShowWorkspaces(extras.showWorkspaces)
+        : 5
     }
   }
 
@@ -245,12 +259,18 @@ Item {
     var next = {
       dnd: root.extrasDraft && root.extrasDraft.dnd ? root.extrasDraft.dnd : "leave",
       theme: root.extrasDraft && root.extrasDraft.theme ? root.extrasDraft.theme : "leave",
-      launchMissing: !(root.extrasDraft && root.extrasDraft.launchMissing === false)
+      launchMissing: !(root.extrasDraft && root.extrasDraft.launchMissing === false),
+      showWorkspaces: root.extrasDraft && root.extrasDraft.showWorkspaces != null
+        ? root.extrasDraft.showWorkspaces : 5
     }
     if (patch) {
       if (patch.dnd !== undefined) next.dnd = patch.dnd
       if (patch.theme !== undefined) next.theme = patch.theme
       if (patch.launchMissing !== undefined) next.launchMissing = patch.launchMissing
+      if (patch.showWorkspaces !== undefined) next.showWorkspaces = patch.showWorkspaces
+    }
+    if (typeof Model.clampShowWorkspaces === "function") {
+      try { next.showWorkspaces = Model.clampShowWorkspaces(next.showWorkspaces) } catch (e) {}
     }
     root.extrasDraft = next
   }
@@ -344,7 +364,7 @@ Item {
     if (!source) return []
     if (typeof Model.previewTiles === "function") {
       try {
-        var preview = Model.previewTiles(source, limit)
+        var preview = Model.previewTiles(source, limit, root.showWorkspaces)
         if (Array.isArray(preview) && preview.length) return preview
       } catch (e) {}
     }
@@ -413,7 +433,7 @@ Item {
     }
     var tiles = root.tilesFrom(desk, 10)
     if (typeof Model.deskPreviewSource === "function" && typeof Model.deskTiles === "function") {
-      try { tiles = Model.deskTiles(Model.deskPreviewSource(desk, root.stage, currentId)) } catch (e) {}
+      try { tiles = Model.deskTiles(Model.deskPreviewSource(desk, root.stage, currentId), 10, extras.showWorkspaces) } catch (e) {}
     }
     return {
       kind: "desk",
@@ -471,7 +491,10 @@ Item {
         try { cards[t].life = Model.deskLife(src, root.stage, currentId) } catch (e) {}
       }
       if (typeof Model.deskPreviewSource === "function" && typeof Model.deskTiles === "function") {
-        try { cards[t].tiles = Model.deskTiles(Model.deskPreviewSource(src, root.stage, currentId)) } catch (e) {}
+        try {
+          var shown = root.extrasOf(src).showWorkspaces
+          cards[t].tiles = Model.deskTiles(Model.deskPreviewSource(src, root.stage, currentId), 10, shown)
+        } catch (e) {}
       } else if (!(cards[t].tiles && cards[t].tiles.length)) {
         cards[t].tiles = root.tilesFrom(src, 10)
       }
@@ -802,6 +825,8 @@ Item {
         if (String(desks[i].id) === String(desk.id)) desks[i].extras = Util.cloneJson(root.extrasDraft)
       }
     }
+    if (next && root.extrasDraft && root.extrasDraft.showWorkspaces != null)
+      next.showWorkspaces = root.extrasDraft.showWorkspaces
     root.mode = "picker"
     root.extrasDesk = null
     root.assignState(next)
@@ -1721,7 +1746,12 @@ Item {
     border.width: 1
     border.color: tile.vacant ? root.borderSoft : Util.alpha(root.foreground, 0.12)
     radius: 0
-    implicitHeight: root.tileHeight
+    readonly property real aspect: {
+      var a = Number(tile.tileData && tile.tileData.aspect)
+      if (isFinite(a) && a >= 0.3 && a <= 5) return a
+      return 16 / 9
+    }
+    implicitHeight: Math.round(width / tile.aspect) + (tile.hasUnder ? tile.underStrip : 0)
     implicitWidth: Style.space(96)
     clip: true
 
@@ -2195,6 +2225,7 @@ Item {
                     model: card.tiles || []
                     delegate: WorkspaceTile {
                       width: Math.floor((parent.width - Style.space(6) * (root.tileColumns - 1)) / root.tileColumns)
+                      height: implicitHeight
                       tileData: modelData
                     }
                   }
@@ -2317,14 +2348,15 @@ Item {
 
             Grid {
               width: parent.width
-              columns: 3
+              columns: root.tileColumns
               columnSpacing: Style.space(6)
               rowSpacing: Style.space(6)
 
               Repeater {
                 model: root.mode === "save" ? root.tilesFrom(root.stage, 10) : []
                 delegate: WorkspaceTile {
-                  width: Math.floor((parent.width - Style.space(12)) / 3)
+                  width: Math.floor((parent.width - Style.space(6) * (root.tileColumns - 1)) / root.tileColumns)
+                  height: implicitHeight
                   tileData: modelData
                 }
               }
@@ -2452,6 +2484,38 @@ Item {
                 label: "no"
                 on: root.extrasDraft.launchMissing === false
                 onClicked: root.patchExtras({ launchMissing: false })
+              }
+            }
+          }
+
+          Item {
+            width: parent.width
+            implicitHeight: Math.max(slotsLabel.implicitHeight, slotsRow.implicitHeight)
+
+            Text {
+              id: slotsLabel
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              text: "Workspaces shown"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.subtitle
+            }
+
+            Row {
+              id: slotsRow
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(6)
+
+              Repeater {
+                model: [4, 5, 6, 8, 10]
+
+                ChoiceChip {
+                  label: String(modelData)
+                  on: Number(root.extrasDraft.showWorkspaces) === Number(modelData)
+                  onClicked: root.patchExtras({ showWorkspaces: Number(modelData) })
+                }
               }
             }
           }

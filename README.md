@@ -26,8 +26,10 @@ Live truth while the session is alive is parked window addresses. Two
 Chromiums on two workspaces work during the day because we move those
 addresses. After a reboot that case is best-effort (`chromium --new-window`
 when we have to launch). Workspace tiles show the tiled layout from window
-geometry, with app icons. A terminal that was running a command (not just
-a shell) is relaunched with that command and working directory.
+geometry, with app icons, two per row at the monitor's aspect ratio.
+Extras can change how many workspaces the minimap shows (default 5).
+A terminal that was running a command (not just a shell) is relaunched
+with that command and working directory.
 
 ## Install
 

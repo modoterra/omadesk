@@ -626,6 +626,13 @@ test("26 tiles default to five and grow with occupied spaces", function() {
   const stacked = model.deskTiles(many)
   assert.ok(stacked[1].label.indexOf("Ghostty") >= 0)
   assert.ok(stacked[1].label.indexOf("Chromium") >= 0)
+  const eight = model.deskTiles(writing, 10, 8)
+  assert.strictEqual(eight.length, 8)
+  const fromExtras = model.deskTiles({
+    extras: { showWorkspaces: 4 },
+    workspaces: [{ n: 1, windows: [{ class: "foot" }] }]
+  })
+  assert.strictEqual(fromExtras.length, 4)
 })
 
 test("27 live vs dead, closePlan, wakePlan parks in the background", function() {
@@ -1442,6 +1449,28 @@ test("48 terminal exec keeps cwd and a non-shell command", function() {
   }, "[]").launches
   assert.strictEqual(launched.length, 1)
   assert.ok(launched[0].exec.indexOf("htop") >= 0)
+})
+
+test("50 minimap aspect matches the monitor; showWorkspaces is the floor", function() {
+  const monitors = [
+    { name: "DP-1", width: 2560, height: 1440, disabled: false, focused: true, activeWorkspace: { id: 1, name: "1" } },
+    { name: "HDMI-A-1", width: 3440, height: 1440, disabled: false, focused: false, activeWorkspace: { id: 4, name: "4" } }
+  ]
+  const stage = model.parseStage(clientsText, workspacesText, JSON.stringify(monitors))
+  assert.ok(Math.abs(stage.monitorSizes["DP-1"].w / stage.monitorSizes["DP-1"].h - 2560 / 1440) < 1e-9)
+  const tiles = model.deskTiles(stage)
+  assert.ok(Math.abs(tiles[0].aspect - 2560 / 1440) < 1e-9)
+  const portrait = model.parseMonitorSizes(JSON.stringify([
+    { name: "eDP-1", width: 1920, height: 1080, transform: 1, disabled: false }
+  ]))
+  assert.strictEqual(portrait["eDP-1"].w, 1080)
+  assert.strictEqual(portrait["eDP-1"].h, 1920)
+  assert.ok(Math.abs(model.aspectForMonitor("eDP-1", portrait) - 1080 / 1920) < 1e-9)
+  assert.strictEqual(model.clampShowWorkspaces(0), 1)
+  assert.strictEqual(model.clampShowWorkspaces(99), 10)
+  assert.strictEqual(model.defaultExtras().showWorkspaces, 5)
+  const merged = model.setExtras(model.demoDesks(), "writing", { showWorkspaces: 8 })
+  assert.strictEqual(merged.desks.filter((d) => d.id === "writing")[0].extras.showWorkspaces, 8)
 })
 
 console.log("ok")

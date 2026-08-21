@@ -17,6 +17,21 @@
     "description": "Shows the current named desk and opens the Desks overlay.",
     "category": "Work",
     "allowMultiple": false,
-    "defaultSection": "left"
+    "defaultSection": "left",
+    "defaults": {
+      "showWorkspaces": 5
+    },
+    "schema": [
+      {
+        "key": "showWorkspaces",
+        "type": "integer",
+        "label": "Workspaces shown",
+        "description": "How many workspace minimaps to show by default (1–10).",
+        "min": 1,
+        "max": 10,
+        "step": 1,
+        "defaultValue": 5
+      }
+    ]
   }
 }

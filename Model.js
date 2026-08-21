@@ -5,11 +5,20 @@
 // Two Chromiums after reboot are best-effort; guessExec uses --new-window.
 
 function emptyState() {
-  return { version: 1, currentId: null, desks: [] }
+  return { version: 1, currentId: null, desks: [], showWorkspaces: 5 }
 }
 
 function defaultExtras() {
-  return { dnd: "leave", theme: "leave", launchMissing: true }
+  return { dnd: "leave", theme: "leave", launchMissing: true, showWorkspaces: 5 }
+}
+
+function clampShowWorkspaces(n) {
+  var v = Number(n)
+  if (!isFinite(v)) return 5
+  v = Math.round(v)
+  if (v < 1) return 1
+  if (v > 10) return 10
+  return v
 }
 
 function desksPath(home) {
@@ -158,6 +167,7 @@ function parseStage(clientsJson, workspacesJson, monitorsJson) {
     parked: parked,
     layout: layout,
     monitors: monitors,
+    monitorSizes: parseMonitorSizes(monitorsJson),
     lastWorkspace: pickLastWorkspace(workspaces, wsOut, layout)
   }
 }
@@ -547,6 +557,8 @@ function snapshotRecipe(stage, name, extras, lastWorkspace, nowIso) {
   }
   var layout = snapshotLayout(stage, workspaces)
   if (layout.length) recipe.layout = layout
+  var sizes = normalizeMonitorSizes(stage && stage.monitorSizes)
+  if (sizes) recipe.monitorSizes = sizes
   return recipe
 }
 
@@ -891,7 +903,11 @@ function pickerCards(state, query, stage, nowMs) {
       here: here,
       life: life,
       dnd: !!(desk.extras && desk.extras.dnd === "on"),
-      tiles: deskTiles(deskPreviewSource(desk, stage, st.currentId)),
+      tiles: deskTiles(
+        deskPreviewSource(desk, stage, st.currentId),
+        10,
+        desk.extras && desk.extras.showWorkspaces != null ? desk.extras.showWorkspaces : st.showWorkspaces
+      ),
       meta: deskSpaceMeta(desk) + formatDeskMeta(desk, nowMs, here),
       desk: desk
     })
@@ -947,7 +963,12 @@ function unsavedCard(state, stage) {
   // +new parks the untitled room then leaves currentId null; 1-10 is empty
   // and the windows sit on unnamed lots, so this is a parked unsaved room.
   if (here && parked.length && !stageWindows(stage).length) here = false
-  var tiles = here ? previewTiles(stage) : previewTiles(parkedToStage(parked))
+  var shown = state && state.showWorkspaces
+  var parkedStage = parkedToStage(parked)
+  if (stage && stage.monitorSizes) {
+    if (parkedStage) parkedStage.monitorSizes = stage.monitorSizes
+  }
+  var tiles = here ? previewTiles(stage, 10, shown) : previewTiles(parkedStage, 10, shown)
   return {
     kind: "unsaved",
     name: "Unsaved",
@@ -1154,6 +1175,76 @@ function parseLayout(monitorsJson, workspaces) {
   return out
 }
 
+function parseMonitorSizes(monitorsJson) {
+  var mons = parseJsonArg(monitorsJson)
+  var out = {}
+  var i
+  for (i = 0; i < mons.length; i++) {
+    var m = mons[i]
+    if (!m || m.disabled) continue
+    var name = safeMonitor(m.name)
+    if (!name) continue
+    var size = monitorPixelSize(m)
+    if (!size) continue
+    out[name] = size
+  }
+  return out
+}
+
+function monitorPixelSize(m) {
+  if (!m) return null
+  var w = Number(m.width)
+  var h = Number(m.height)
+  if (!(w > 0 && h > 0) && isArray(m.size) && m.size.length >= 2) {
+    w = Number(m.size[0])
+    h = Number(m.size[1])
+  }
+  if (!(w > 0 && h > 0)) return null
+  var t = Number(m.transform)
+  if (t === 1 || t === 3 || t === 90 || t === 270) {
+    var tmp = w
+    w = h
+    h = tmp
+  }
+  return { w: w, h: h }
+}
+
+function normalizeMonitorSizes(sizes) {
+  if (!sizes || typeof sizes !== "object" || isArray(sizes)) return null
+  var out = {}
+  var n = 0
+  var k
+  for (k in sizes) {
+    if (!Object.prototype.hasOwnProperty.call(sizes, k)) continue
+    var name = safeMonitor(k)
+    var row = sizes[k] || {}
+    var parsed = monitorPixelSize({
+      width: row.w != null ? row.w : row.width,
+      height: row.h != null ? row.h : row.height
+    })
+    if (!name || !parsed) continue
+    out[name] = parsed
+    n += 1
+  }
+  return n ? out : null
+}
+
+function aspectForMonitor(name, sizes) {
+  var row = null
+  if (sizes && name && sizes[name]) row = sizes[name]
+  if (!row && sizes) {
+    var k
+    for (k in sizes) {
+      if (Object.prototype.hasOwnProperty.call(sizes, k) && sizes[k] && sizes[k].w > 0 && sizes[k].h > 0) {
+        row = sizes[k]
+        break
+      }
+    }
+  }
+  if (row && row.w > 0 && row.h > 0) return row.w / row.h
+  return 16 / 9
+}
+
 function connectedMonitorNames(monitorsJson, workspaces) {
   var mons = parseJsonArg(monitorsJson)
   var out = []
@@ -1335,7 +1426,12 @@ function normalizeState(state) {
     if (desk) desks.push(desk)
   }
   var currentId = src.currentId == null || src.currentId === "" ? null : String(src.currentId)
-  return { version: 1, currentId: currentId, desks: desks }
+  return {
+    version: 1,
+    currentId: currentId,
+    desks: desks,
+    showWorkspaces: clampShowWorkspaces(src.showWorkspaces)
+  }
 }
 
 function normalizeDesk(desk) {
@@ -1391,6 +1487,8 @@ function normalizeDesk(desk) {
   var layout = normalizeLayout(desk.layout)
   if (!layout.length) layout = deskLayout({ workspaces: workspaces })
   if (layout.length) out.layout = layout
+  var sizes = normalizeMonitorSizes(desk.monitorSizes)
+  if (sizes) out.monitorSizes = sizes
   return out
 }
 
@@ -1434,15 +1532,18 @@ function mergeExtras(base, extra) {
   var out = {
     dnd: "leave",
     theme: "leave",
-    launchMissing: true
+    launchMissing: true,
+    showWorkspaces: 5
   }
   if (base && (base.dnd === "on" || base.dnd === "off" || base.dnd === "leave")) out.dnd = base.dnd
   if (base && typeof base.theme === "string" && base.theme !== "") out.theme = base.theme
   if (base && base.launchMissing === false) out.launchMissing = false
+  if (base && base.showWorkspaces != null) out.showWorkspaces = clampShowWorkspaces(base.showWorkspaces)
   if (extra && (extra.dnd === "on" || extra.dnd === "off" || extra.dnd === "leave")) out.dnd = extra.dnd
   if (extra && typeof extra.theme === "string" && extra.theme !== "") out.theme = extra.theme
   if (extra && extra.launchMissing === false) out.launchMissing = false
   if (extra && extra.launchMissing === true) out.launchMissing = true
+  if (extra && extra.showWorkspaces != null) out.showWorkspaces = clampShowWorkspaces(extra.showWorkspaces)
   return out
 }
 
@@ -1534,11 +1635,10 @@ function tileLabel(ws) {
   return label
 }
 
-function deskTiles(desk, limit) {
+function deskTiles(desk, limit, shownCount) {
   var cap = Number(limit)
   if (!isFinite(cap) || cap < 1) cap = 10
   if (cap > 10) cap = 10
-  var floor = cap < 5 ? cap : 5
   var byN = {}
   var list = deskWorkspaces(desk)
   var i
@@ -1561,8 +1661,15 @@ function deskTiles(desk, limit) {
       }
     }
   }
-  if (last < floor) last = floor
+  var shown = clampShowWorkspaces(
+    shownCount != null ? shownCount
+      : (desk && desk.extras && desk.extras.showWorkspaces != null ? desk.extras.showWorkspaces
+        : (desk && desk.showWorkspaces))
+  )
+  if (shown > cap) shown = cap
+  if (last < shown) last = shown
   if (last > cap) last = cap
+  var sizes = (desk && desk.monitorSizes) || {}
   var tiles = []
   for (n = 1; n <= last; n++) {
     var label = tileLabel(byN[n])
@@ -1574,7 +1681,8 @@ function deskTiles(desk, limit) {
       label: label,
       vacant: label === "empty",
       panes: layout.panes,
-      under: layout.under
+      under: layout.under,
+      aspect: aspectForMonitor(byN[n] && byN[n].monitor, sizes)
     })
   }
   return tiles
@@ -1823,9 +1931,18 @@ function deskLife(desk, stage, currentId) {
 }
 
 function deskPreviewSource(desk, stage, currentId) {
-  if (isCurrentDesk(desk, currentId) && stage) return stage
+  var sizes = (stage && stage.monitorSizes) || (desk && desk.monitorSizes)
+  if (isCurrentDesk(desk, currentId) && stage) {
+    if (sizes && !stage.monitorSizes) stage.monitorSizes = sizes
+    return stage
+  }
   var parked = parkedForSlug(stage, desk && desk.id)
-  if (parked.length) return parkedToStage(parked)
+  if (parked.length) {
+    var src = parkedToStage(parked)
+    if (sizes) src.monitorSizes = sizes
+    if (desk && desk.extras) src.extras = desk.extras
+    return src
+  }
   return desk
 }
 
@@ -1869,8 +1986,8 @@ function wakePlan(desk, stage, currentId) {
   return list
 }
 
-function previewTiles(source, limit) {
-  return deskTiles(source, limit)
+function previewTiles(source, limit, shown) {
+  return deskTiles(source, limit, shown)
 }
 
 function snapshotWorkspaces(stage) {
