@@ -1382,6 +1382,17 @@ test("47 windowPanes follow dwindle and scrolling geometry; icons not names", fu
   ]), [])
 })
 
+test("49 iconLetters: one word first+last, two words initials", function() {
+  assert.strictEqual(model.iconLetters({ class: "firefox" }), "Fx")
+  assert.strictEqual(model.iconLetters({ class: "org.mozilla.firefox" }), "Fx")
+  assert.strictEqual(model.iconLetters({ class: "chromium" }), "Cm")
+  assert.strictEqual(model.iconLetters({ class: "dev.zed.Zed" }), "Zd")
+  assert.strictEqual(model.iconLetters({ class: "com.mitchellh.ghostty" }), "Gy")
+  assert.strictEqual(model.iconLetters({ class: "GeForceNOW" }), "GN")
+  assert.strictEqual(model.iconLetters({ class: "chrome-music.apple.com__-Profile_1" }), "MA")
+  assert.strictEqual(model.iconLetters({ class: "X" }), "X")
+})
+
 test("48 terminal exec keeps cwd and a non-shell command", function() {
   same(
     model.terminalExec({

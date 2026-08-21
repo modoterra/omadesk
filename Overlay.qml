@@ -309,7 +309,14 @@ Item {
       var path = Quickshell.iconPath(names[i], true)
       if (path) return path
     }
-    return Quickshell.iconPath("application-x-executable", true)
+    return ""
+  }
+
+  function iconLetters(app) {
+    if (typeof Model.iconLetters === "function") {
+      try { return Model.iconLetters(app) } catch (e) {}
+    }
+    return "?"
   }
 
   function terminalPids(stage) {
@@ -1705,7 +1712,7 @@ Item {
     readonly property var panes: tile.tileData && tile.tileData.panes ? tile.tileData.panes : []
     readonly property var under: tile.tileData && tile.tileData.under ? tile.tileData.under : []
     readonly property bool hasUnder: !tile.vacant && tile.under && tile.under.length > 0
-    readonly property int underStrip: tile.hasUnder ? 22 : 0
+    readonly property int underStrip: tile.hasUnder ? 30 : 0
     readonly property int paneGap: 2
     readonly property int numberInset: 8
 
@@ -1744,6 +1751,7 @@ Item {
           radius: 3
 
           Image {
+            id: paneIcon
             anchors.centerIn: parent
             width: Math.min(Style.space(22), Math.max(Style.space(10), Math.min(parent.width, parent.height) * 0.55))
             height: width
@@ -1752,6 +1760,17 @@ Item {
             sourceSize.width: width * Screen.devicePixelRatio
             sourceSize.height: height * Screen.devicePixelRatio
             source: root.iconSource(modelData)
+            visible: status === Image.Ready
+          }
+
+          Text {
+            visible: paneIcon.status !== Image.Ready
+            anchors.centerIn: parent
+            text: root.iconLetters(modelData)
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Math.max(Style.font.caption, Math.min(parent.width, parent.height) * 0.32)
+            font.weight: Font.DemiBold
           }
         }
       }
@@ -1773,22 +1792,42 @@ Item {
       }
 
       Row {
-        anchors.centerIn: parent
-        spacing: 6
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.verticalCenter: parent.verticalCenter
+        anchors.leftMargin: 8
+        anchors.rightMargin: 8
+        spacing: 8
 
         Repeater {
           model: tile.hasUnder ? tile.under : []
 
-          delegate: Image {
+          delegate: Item {
             required property var modelData
-            width: 14
-            height: 14
-            fillMode: Image.PreserveAspectFit
-            asynchronous: true
-            sourceSize.width: width * Screen.devicePixelRatio
-            sourceSize.height: height * Screen.devicePixelRatio
-            source: root.iconSource(modelData)
-            opacity: 0.85
+            width: 16
+            height: 16
+
+            Image {
+              id: underIcon
+              anchors.fill: parent
+              fillMode: Image.PreserveAspectFit
+              asynchronous: true
+              sourceSize.width: width * Screen.devicePixelRatio
+              sourceSize.height: height * Screen.devicePixelRatio
+              source: root.iconSource(modelData)
+              visible: status === Image.Ready
+              opacity: 0.9
+            }
+
+            Text {
+              visible: underIcon.status !== Image.Ready
+              anchors.centerIn: parent
+              text: root.iconLetters(modelData)
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.weight: Font.DemiBold
+            }
           }
         }
       }

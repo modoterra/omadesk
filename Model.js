@@ -1469,6 +1469,36 @@ function prettyApp(win) {
   return last
 }
 
+function iconLetters(win) {
+  var name = prettyApp(win)
+  if (win && typeof win === "object" && win.letters) return String(win.letters)
+  var raw = String(name || "").replace(/^\s+|\s+$/g, "")
+  if (!raw || raw === "app") {
+    var cls = String((win && (win.class || win.initialClass)) || (typeof win === "string" ? win : "") || "")
+    raw = lastClassSegment(cls) || cls
+  }
+  raw = String(raw || "").replace(/^\s+|\s+$/g, "")
+  if (!raw) return "?"
+  var parts = raw.split(/[\s._-]+/)
+  var words = []
+  var skip = { www: 1, com: 1, org: 1, net: 1, io: 1, app: 1, dev: 1, edu: 1, gov: 1, co: 1, uk: 1, us: 1 }
+  var i
+  for (i = 0; i < parts.length; i++) {
+    var token = String(parts[i] || "")
+    if (!token) continue
+    if (skip[token.toLowerCase()] && parts.length > 1) continue
+    words.push(token)
+  }
+  if (!words.length) words = [raw]
+  if (words.length >= 2) {
+    return words[0].charAt(0).toUpperCase() + words[1].charAt(0).toUpperCase()
+  }
+  var word = words[0]
+  var first = word.charAt(0).toUpperCase()
+  if (word.length === 1) return first
+  return first + word.charAt(word.length - 1).toLowerCase()
+}
+
 function shortTitle(win) {
   var title = String((win && win.title) || "").replace(/^\s+|\s+$/g, "")
   if (!title) return ""
@@ -1637,7 +1667,8 @@ function underRecords(list, top) {
     if (topAddr && win.address && stripAddress(win.address) === topAddr) continue
     out.push({
       icon: iconName(win),
-      class: String((win.class || win.initialClass) || "")
+      class: String((win.class || win.initialClass) || ""),
+      letters: iconLetters(win)
     })
   }
   return out
@@ -1681,6 +1712,7 @@ function paneRecord(win, x, y, w, h) {
     h: h,
     icon: iconName(win),
     class: String((win && (win.class || win.initialClass)) || ""),
+    letters: iconLetters(win),
     floating: !!(win && win.floating)
   }
 }
