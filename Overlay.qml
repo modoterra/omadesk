@@ -1788,26 +1788,15 @@ Item {
       horizontalAlignment: Text.AlignHCenter
     }
 
-    Rectangle {
+    Text {
       x: tile.numberInset
       y: tile.numberInset
       z: 2
-      color: tile.vacant ? root.background : Util.alpha(root.background, 0.86)
-      border.width: 1
-      border.color: root.borderSoft
-      radius: height / 2
-      implicitWidth: Math.max(idLabel.implicitHeight + 6, idLabel.implicitWidth + 8)
-      implicitHeight: idLabel.implicitHeight + 2
-
-      Text {
-        id: idLabel
-        anchors.centerIn: parent
-        text: tile.tileId
-        color: root.foreground
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.caption
-        font.weight: Font.Medium
-      }
+      text: tile.tileId
+      color: root.foreground
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+      font.weight: Font.Medium
     }
   }
 
