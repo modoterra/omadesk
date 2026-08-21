@@ -599,13 +599,12 @@ test("25 last used follows switch, not last save; here is now", function() {
   assert.strictEqual(left.desks.filter((d) => d.id === "call")[0].lastUsed, used + 120000)
 })
 
-test("26 tiles default to five and grow with occupied spaces", function() {
+test("26 tiles only include workspaces that have windows", function() {
   const writing = model.demoDesks().desks[0]
   const tiles = model.deskTiles(writing)
-  assert.strictEqual(tiles.length, 5)
+  assert.strictEqual(tiles.length, 3)
   assert.strictEqual(tiles[0].label, "Zed · charcana")
-  assert.strictEqual(tiles[3].vacant, true)
-  assert.strictEqual(tiles[4].vacant, true)
+  tiles.forEach((t) => { assert.strictEqual(t.vacant, false) })
   const wide = {
     workspaces: [
       { n: 1, windows: [{ class: "dev.zed.Zed", title: "a" }] },
@@ -613,9 +612,9 @@ test("26 tiles default to five and grow with occupied spaces", function() {
     ]
   }
   const grown = model.deskTiles(wide)
-  assert.strictEqual(grown.length, 7)
-  assert.strictEqual(grown[6].n, 7)
-  assert.strictEqual(grown[6].vacant, false)
+  assert.strictEqual(grown.length, 2)
+  assert.strictEqual(grown[0].n, 1)
+  assert.strictEqual(grown[1].n, 7)
   const many = {
     windows: [
       { class: "com.mitchellh.ghostty", title: "one", workspace: 2 },
@@ -624,8 +623,10 @@ test("26 tiles default to five and grow with occupied spaces", function() {
     ]
   }
   const stacked = model.deskTiles(many)
-  assert.ok(stacked[1].label.indexOf("Ghostty") >= 0)
-  assert.ok(stacked[1].label.indexOf("Chromium") >= 0)
+  assert.strictEqual(stacked.length, 1)
+  assert.strictEqual(stacked[0].n, 2)
+  assert.ok(stacked[0].label.indexOf("Ghostty") >= 0)
+  assert.ok(stacked[0].label.indexOf("Chromium") >= 0)
 })
 
 test("27 live vs dead, closePlan, wakePlan parks in the background", function() {

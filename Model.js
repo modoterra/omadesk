@@ -1615,42 +1615,36 @@ function deskTiles(desk, limit) {
   var cap = Number(limit)
   if (!isFinite(cap) || cap < 1) cap = 10
   if (cap > 10) cap = 10
-  var floor = cap < 5 ? cap : 5
   var byN = {}
   var list = deskWorkspaces(desk)
   var i
-  var last = 0
+  var n
   for (i = 0; i < list.length; i++) {
-    var n = Number(list[i].n)
-    if (n >= 1 && n <= 10) {
-      byN[n] = list[i]
-      if (n > last) last = n
-    }
+    n = Number(list[i].n)
+    if (n >= 1 && n <= cap) byN[n] = list[i]
   }
   if ((!list || !list.length) && desk && isArray(desk.windows)) {
     for (i = 0; i < desk.windows.length; i++) {
       var wn = Number(desk.windows[i] && desk.windows[i].workspace)
-      if (wn >= 1 && wn <= 10) {
+      if (wn >= 1 && wn <= cap) {
         if (!byN[wn]) byN[wn] = { n: wn, windows: [] }
         if (!isArray(byN[wn].windows)) byN[wn].windows = []
         byN[wn].windows.push(desk.windows[i])
-        if (wn > last) last = wn
       }
     }
   }
-  if (last < floor) last = floor
-  if (last > cap) last = cap
   var sizes = (desk && desk.monitorSizes) || {}
   var tiles = []
-  for (n = 1; n <= last; n++) {
-    var label = tileLabel(byN[n])
+  for (n = 1; n <= cap; n++) {
     var wins = byN[n] && byN[n].windows ? byN[n].windows : []
+    if (!wins.length) continue
+    var label = tileLabel(byN[n])
     var layout = paneLayout(wins)
     tiles.push({
       id: n,
       n: n,
       label: label,
-      vacant: label === "empty",
+      vacant: false,
       panes: layout.panes,
       under: layout.under,
       aspect: aspectForMonitor(byN[n] && byN[n].monitor, sizes)
