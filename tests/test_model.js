@@ -1348,6 +1348,21 @@ test("47 windowPanes follow dwindle and scrolling geometry; icons not names", fu
   const zed = recipe.workspaces[0].windows[0]
   assert.ok(zed.w > 0)
   assert.ok(zed.icon)
+  const covered = model.windowPanes([
+    { class: "foot", x: 0, y: 0, w: 400, h: 400 },
+    { class: "com.mitchellh.ghostty", x: 0, y: 400, w: 400, h: 400 },
+    { class: "chromium", x: 0, y: 0, w: 800, h: 800, fullscreen: 2 }
+  ])
+  assert.strictEqual(covered.length, 1)
+  assert.strictEqual(covered[0].icon, "chromium")
+  assert.ok(Math.abs(covered[0].w - 1) < 1e-9)
+  assert.ok(Math.abs(covered[0].h - 1) < 1e-9)
+  const maximized = model.windowPanes([
+    { class: "foot", x: 12, y: 50, w: 400, h: 500 },
+    { class: "chromium", x: 0, y: 0, w: 1920, h: 1080 }
+  ])
+  assert.strictEqual(maximized.length, 1)
+  assert.strictEqual(maximized[0].icon, "chromium")
 })
 
 test("48 terminal exec keeps cwd and a non-shell command", function() {

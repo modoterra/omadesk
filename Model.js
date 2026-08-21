@@ -1408,6 +1408,7 @@ function normalizeRecipeWindow(w) {
   if (src.address) rec.address = String(src.address)
   copyGeom(rec, src)
   delete rec.pid
+  if (rec.fullscreen) rec.fullscreen = Number(rec.fullscreen)
   var cwd = String(src.cwd || "")
   if (cwd && !/[\n\r]/.test(cwd)) rec.cwd = cwd
   var cmd = safeArgv(src.cmd)
@@ -1590,6 +1591,8 @@ function windowPanes(windows) {
   var bh = maxY - minY
   var panes = []
   if (!geoms.length || !(bw > 0) || !(bh > 0)) {
+    var cover = coveringWindow(list, [])
+    if (cover) return [paneRecord(cover, 0, 0, 1, 1)]
     var n = list.length
     if (!n) return panes
     for (i = 0; i < n; i++) {
@@ -1597,6 +1600,8 @@ function windowPanes(windows) {
     }
     return panes
   }
+  var top = coveringWindow(list, geoms, bw, bh)
+  if (top) return [paneRecord(top, 0, 0, 1, 1)]
   for (i = 0; i < geoms.length; i++) {
     panes.push(paneRecord(
       geoms[i].win,
@@ -1607,6 +1612,36 @@ function windowPanes(windows) {
     ))
   }
   return panes
+}
+
+function isFullscreenWin(win) {
+  if (!win) return false
+  if (win.fullscreen === true) return true
+  var n = Number(win.fullscreen)
+  return isFinite(n) && n > 0
+}
+
+function coveringWindow(list, geoms, bw, bh) {
+  var i
+  var flagged = null
+  if (isArray(list)) {
+    for (i = 0; i < list.length; i++) {
+      if (isFullscreenWin(list[i])) flagged = list[i]
+    }
+  }
+  if (flagged) return flagged
+  if (!isArray(geoms) || geoms.length < 2 || !(bw > 0) || !(bh > 0)) return null
+  var best = null
+  var bestArea = 0
+  for (i = 0; i < geoms.length; i++) {
+    if (geoms[i].w / bw < 0.92 || geoms[i].h / bh < 0.92) continue
+    var area = geoms[i].w * geoms[i].h
+    if (area > bestArea) {
+      best = geoms[i].win
+      bestArea = area
+    }
+  }
+  return best
 }
 
 function paneRecord(win, x, y, w, h) {
@@ -1633,6 +1668,11 @@ function copyGeom(dst, src) {
   }
   var pid = src.pid != null ? Number(src.pid) : NaN
   if (isFinite(pid) && pid > 0) dst.pid = pid
+  if (src.fullscreen === true) dst.fullscreen = 2
+  else {
+    var fs = Number(src.fullscreen)
+    if (isFinite(fs) && fs > 0) dst.fullscreen = fs
+  }
   if (src.cwd) dst.cwd = String(src.cwd)
   var cmd = safeArgv(src.cmd)
   if (cmd.length) dst.cmd = cmd
