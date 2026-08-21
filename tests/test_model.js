@@ -1280,6 +1280,42 @@ test("45 empty here with unnamed lots is a parked unsaved room, not a live empty
   assert.strictEqual(parkedWhileNamed.filter((c) => c.kind === "unsaved")[0].here, false)
 })
 
+test("46 wake and launchMissing skip a missing display, still launch the window", function() {
+  const desk = {
+    id: "dual",
+    extras: model.defaultExtras(),
+    layout: [
+      { n: 1, monitor: "DP-1", focused: true },
+      { n: 4, monitor: "HDMI-A-1" }
+    ],
+    workspaces: [
+      { n: 1, monitor: "DP-1", windows: [{ class: "dev.zed.Zed", exec: ["zed"] }] },
+      { n: 4, monitor: "HDMI-A-1", windows: [{ class: "chromium", exec: ["chromium", "--new-window"] }] }
+    ]
+  }
+  const laptop = { windows: [], parked: [], monitors: ["DP-1"] }
+  const woke = model.wakePlan(desk, laptop, "writing")
+  const onLaptop = woke.launches.filter((item) => String(item.workspace).indexOf("omadesk-dual-1") >= 0)[0]
+  const onHdmi = woke.launches.filter((item) => String(item.workspace).indexOf("omadesk-dual-4") >= 0)[0]
+  assert.ok(onLaptop)
+  assert.ok(onHdmi)
+  assert.strictEqual(onLaptop.monitor, "DP-1")
+  assert.ok(!onHdmi.monitor)
+  assert.ok(String(onHdmi.workspace).indexOf("omadesk-dual-4") >= 0)
+  same(onHdmi.exec, ["chromium", "--new-window"])
+  const emptyConn = model.wakePlan(desk, { windows: [], parked: [], monitors: [] }, "writing")
+  emptyConn.launches.forEach((item) => {
+    assert.ok(!item.monitor)
+  })
+  const both = model.wakePlan(desk, { windows: [], parked: [], monitors: ["DP-1", "HDMI-A-1"] }, "writing")
+  const hdmiBoth = both.launches.filter((item) => String(item.workspace).indexOf("omadesk-dual-4") >= 0)[0]
+  assert.strictEqual(hdmiBoth.monitor, "HDMI-A-1")
+  const launched = model.launchMissingPlan(desk, laptop).launches
+  const hdmiLaunch = launched.filter((item) => String(item.n) === "4")[0]
+  assert.ok(hdmiLaunch)
+  assert.ok(!hdmiLaunch.monitor)
+})
+
 console.log("ok")
 
 

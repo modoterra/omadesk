@@ -593,12 +593,34 @@ function matchWindow(recipeWin, clients, usedAddresses, workspaceN) {
   return null
 }
 
+function monitorAllowSet(connected) {
+  if (!isArray(connected)) return null
+  var allow = {}
+  var i
+  for (i = 0; i < connected.length; i++) {
+    var nm = safeMonitor(connected[i])
+    if (nm) allow[nm] = true
+  }
+  return allow
+}
+
+function pickConnectedMonitor(mon, allow) {
+  mon = safeMonitor(mon)
+  if (!mon) return ""
+  if (allow && !allow[mon]) return ""
+  return mon
+}
+
 function launchMissingPlan(desk, clientsJson) {
   var extras = (desk && desk.extras) || defaultExtras()
   var empty = []
   empty.launches = []
   if (extras.launchMissing === false) return empty
   var clients = clientsForMatch(clientsJson, desk)
+  var allow = null
+  if (clientsJson && typeof clientsJson === "object" && !isArray(clientsJson) && isArray(clientsJson.monitors)) {
+    allow = monitorAllowSet(clientsJson.monitors)
+  }
   var used = []
   var launches = []
   var workspaces = deskWorkspaces(desk)
@@ -619,7 +641,7 @@ function launchMissingPlan(desk, clientsJson) {
       }
       var exec = resolveExec(rw)
       if (!exec || !exec.length) continue
-      var mon = safeMonitor((ws && ws.monitor) || (rw && rw.monitor))
+      var mon = pickConnectedMonitor((ws && ws.monitor) || (rw && rw.monitor), allow)
       var item = {
         n: n,
         workspace: String(n),
@@ -1479,10 +1501,13 @@ function wakePlan(desk, stage, currentId) {
   var byN = {}
   var li
   for (li = 0; li < layout.length; li++) byN[layout[li].n] = layout[li].monitor
+  var allow = monitorAllowSet(stage && stage.monitors)
   var i
   for (i = 0; i < list.length; i++) {
     if (!here) list[i].workspace = parkSelector(sanitizeSlug(desk && desk.id), list[i].n)
-    if (!list[i].monitor && byN[list[i].n]) list[i].monitor = byN[list[i].n]
+    var mon = pickConnectedMonitor(list[i].monitor || byN[list[i].n], allow)
+    if (mon) list[i].monitor = mon
+    else if (list[i].monitor) list[i].monitor = ""
   }
   list.launches = list.slice()
   return list
