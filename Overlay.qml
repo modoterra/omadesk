@@ -70,7 +70,7 @@ Item {
   property int gridGap: Style.space(8)
   property int cellWidth: Math.max(1, Math.floor((cardWidth - card.contentLeftInset - card.contentRightInset - gridGap) / 2))
   property int tileColumns: 3
-  property int tileHeight: Style.space(92)
+  property int tileHeight: Style.space(140)
   readonly property string desksDir: (Quickshell.env("HOME") || "") + "/.config/omarchy/omadesk"
   readonly property string desksPath: desksDir + "/desks.json"
   readonly property bool dialogOpen: root.mode !== "picker"
