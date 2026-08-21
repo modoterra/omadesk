@@ -1,13 +1,14 @@
 # Desks
 
 ```
-     +-----+
-     | o o |
-     |  ~  |
-     +--+--+
-       | |
-      /   \
-     /_____\
+      +---------+
+      |  o   o  |
+      |    ~    |
+      +----+----+
+     /|         |\
+     \|_________|/
+       ||     ||
+      _||     ||_
 ```
 
 Named-desk overlay for Omarchy Quattro. A desk is the current 1–10

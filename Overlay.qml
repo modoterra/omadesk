@@ -77,13 +77,14 @@ Item {
   readonly property int deskCount: (root.desksState && root.desksState.desks && root.desksState.desks.length) ? root.desksState.desks.length : 0
   readonly property bool pickerEmpty: root.mode === "picker" && root.deskCount === 0
   readonly property var mascotLines: [
-    "     +-----+",
-    "     | o o |",
-    "     |  ~  |",
-    "     +--+--+",
-    "       | |",
-    "      /   \\",
-    "     /_____\\"
+    "      +---------+",
+    "      |  o   o  |",
+    "      |    ~    |",
+    "      +----+----+",
+    "     /|         |\\",
+    "     \\|_________|/",
+    "       ||     ||",
+    "      _||     ||_"
   ]
 
   function pluginId() {
@@ -1757,9 +1758,10 @@ Item {
                 width: parent.width
                 text: modelData
                 color: root.foreground
-                font.family: root.fontFamily
+                font.family: Style.font.family
                 font.pixelSize: Style.font.title
                 font.weight: Font.Normal
+                font.preferShaping: false
                 wrapMode: Text.NoWrap
                 textFormat: Text.PlainText
               }
