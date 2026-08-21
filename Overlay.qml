@@ -1712,9 +1712,10 @@ Item {
     readonly property var panes: tile.tileData && tile.tileData.panes ? tile.tileData.panes : []
     readonly property var under: tile.tileData && tile.tileData.under ? tile.tileData.under : []
     readonly property bool hasUnder: !tile.vacant && tile.under && tile.under.length > 0
-    readonly property int underStrip: tile.hasUnder ? 30 : 0
+    readonly property int underStrip: tile.hasUnder ? 36 : 0
     readonly property int paneGap: 2
     readonly property int numberInset: 8
+    readonly property int iconPad: 4
 
     color: tile.vacant ? "transparent" : root.tileFill
     border.width: 1
@@ -1753,7 +1754,7 @@ Item {
           Image {
             id: paneIcon
             anchors.centerIn: parent
-            width: Math.min(Style.space(22), Math.max(Style.space(10), Math.min(parent.width, parent.height) * 0.55))
+            width: Math.max(0, Math.min(Style.space(22), Math.min(parent.width, parent.height) - tile.iconPad * 2))
             height: width
             fillMode: Image.PreserveAspectFit
             asynchronous: true
@@ -1794,9 +1795,12 @@ Item {
       Row {
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.verticalCenter: parent.verticalCenter
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
         anchors.leftMargin: 8
         anchors.rightMargin: 8
+        anchors.topMargin: 8
+        anchors.bottomMargin: 8
         spacing: 8
 
         Repeater {
