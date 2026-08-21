@@ -1756,17 +1756,16 @@ Item {
     Rectangle {
       visible: tile.vacant
       anchors.centerIn: parent
-      color: "transparent"
-      border.width: 1
-      border.color: root.borderSoft
+      color: root.tileFill
+      border.width: 0
       radius: 0
-      implicitWidth: emptyLabel.implicitWidth + 12
-      implicitHeight: emptyLabel.implicitHeight + 4
+      implicitWidth: emptyLabel.implicitWidth + 16
+      implicitHeight: emptyLabel.implicitHeight + 8
 
       Text {
         id: emptyLabel
         anchors.centerIn: parent
-        text: "empty"
+        text: "Empty"
         color: root.muted
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
@@ -1896,7 +1895,7 @@ Item {
             id: titleText
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
-            text: root.mode === "save" ? "Save this room"
+            text: root.mode === "save" ? "Save Current Desk"
               : (root.mode === "rename" ? "Rename"
               : (root.mode === "extras" && root.extrasPickingTheme ? "Theme"
               : (root.mode === "extras" && root.extrasDesk ? String(root.extrasDesk.name || "")
@@ -2226,7 +2225,7 @@ Item {
             spacing: Style.space(6)
 
             Text {
-              text: "What will be stored"
+              text: "Minimap"
               color: root.muted
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
@@ -2252,7 +2251,7 @@ Item {
             spacing: Style.space(8)
 
             ChromeButton {
-              label: root.mode === "rename" ? "Rename desk" : "Save desk"
+              label: root.mode === "rename" ? "Rename desk" : "Save"
               primary: true
               onClicked: root.confirmName()
             }
