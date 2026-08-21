@@ -1703,10 +1703,13 @@ Item {
     readonly property string tileId: tile.tileData && tile.tileData.id !== undefined ? String(tile.tileData.id) : ""
     readonly property string tileLabel: tile.tileData ? String(tile.tileData.label || (tile.vacant ? "empty" : "")) : ""
     readonly property var panes: tile.tileData && tile.tileData.panes ? tile.tileData.panes : []
+    readonly property int paneGap: 2
+    readonly property int numberInset: 4
 
     color: tile.vacant ? "transparent" : root.tileFill
     border.width: 1
     border.color: tile.vacant ? root.borderSoft : Util.alpha(root.foreground, 0.12)
+    radius: 4
     implicitHeight: root.tileHeight
     implicitWidth: Style.space(96)
     clip: true
@@ -1714,7 +1717,7 @@ Item {
     Item {
       id: map
       anchors.fill: parent
-      anchors.margins: Style.space(3)
+      anchors.margins: 2
       visible: !tile.vacant && tile.panes && tile.panes.length
 
       Repeater {
@@ -1727,13 +1730,14 @@ Item {
           readonly property real pw: Number(modelData && modelData.w)
           readonly property real ph: Number(modelData && modelData.h)
 
-          x: map.width * (isFinite(px) ? px : 0)
-          y: map.height * (isFinite(py) ? py : 0)
-          width: Math.max(Style.space(8), map.width * (isFinite(pw) ? pw : 0) - 1)
-          height: Math.max(Style.space(8), map.height * (isFinite(ph) ? ph : 0) - 1)
+          x: map.width * (isFinite(px) ? px : 0) + tile.paneGap / 2
+          y: map.height * (isFinite(py) ? py : 0) + tile.paneGap / 2
+          width: Math.max(Style.space(8), map.width * (isFinite(pw) ? pw : 0) - tile.paneGap)
+          height: Math.max(Style.space(8), map.height * (isFinite(ph) ? ph : 0) - tile.paneGap)
           color: Util.alpha(root.foreground, modelData && modelData.floating ? 0.10 : 0.05)
           border.width: 1
-          border.color: Util.alpha(root.foreground, 0.28)
+          border.color: Util.alpha(root.foreground, 0.22)
+          radius: 3
 
           Image {
             anchors.centerIn: parent
@@ -1749,29 +1753,61 @@ Item {
       }
     }
 
+    Rectangle {
+      visible: tile.vacant
+      anchors.centerIn: parent
+      color: "transparent"
+      border.width: 1
+      border.color: root.borderSoft
+      radius: height / 2
+      implicitWidth: emptyLabel.implicitWidth + 12
+      implicitHeight: emptyLabel.implicitHeight + 4
+
+      Text {
+        id: emptyLabel
+        anchors.centerIn: parent
+        text: "empty"
+        color: root.muted
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+      }
+    }
+
     Text {
-      visible: tile.vacant || !(tile.panes && tile.panes.length)
+      visible: !tile.vacant && !(tile.panes && tile.panes.length)
       anchors.fill: parent
       anchors.margins: Style.space(6)
-      text: tile.vacant ? "empty" : tile.tileLabel
-      color: tile.vacant ? root.muted : Util.alpha(root.foreground, 0.78)
+      text: tile.tileLabel
+      color: Util.alpha(root.foreground, 0.78)
       font.family: root.fontFamily
       font.pixelSize: Style.font.caption
       wrapMode: Text.Wrap
       maximumLineCount: 2
       elide: Text.ElideRight
       verticalAlignment: Text.AlignVCenter
+      horizontalAlignment: Text.AlignHCenter
     }
 
-    Text {
-      anchors.left: parent.left
-      anchors.top: parent.top
-      anchors.margins: Style.space(4)
-      text: tile.tileId
-      color: root.foreground
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.caption
-      font.weight: Font.Medium
+    Rectangle {
+      x: tile.numberInset
+      y: tile.numberInset
+      z: 2
+      color: tile.vacant ? root.background : Util.alpha(root.background, 0.86)
+      border.width: 1
+      border.color: root.borderSoft
+      radius: height / 2
+      implicitWidth: Math.max(idLabel.implicitHeight + 6, idLabel.implicitWidth + 8)
+      implicitHeight: idLabel.implicitHeight + 2
+
+      Text {
+        id: idLabel
+        anchors.centerIn: parent
+        text: tile.tileId
+        color: root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        font.weight: Font.Medium
+      }
     }
   }
 
