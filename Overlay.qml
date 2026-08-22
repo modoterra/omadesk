@@ -2311,7 +2311,7 @@ Item {
 
           Column {
             width: parent.width
-            spacing: Style.space(6)
+            spacing: Style.space(10)
 
             PanelSectionHeader {
               text: "NAME"
@@ -2346,7 +2346,7 @@ Item {
           Column {
             width: parent.width
             visible: root.mode === "save"
-            spacing: Style.space(6)
+            spacing: Style.space(10)
 
             PanelSectionHeader {
               text: "MINIMAP"
