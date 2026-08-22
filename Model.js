@@ -250,6 +250,7 @@ function focusWorkspaceN(value) {
 function buildParkPlan(stage, slug) {
   var clean = sanitizeSlug(slug)
   var dispatches = []
+  var seen = {}
   var list = stageWindows(stage)
   var i
   for (i = 0; i < list.length; i++) {
@@ -260,7 +261,23 @@ function buildParkPlan(stage, slug) {
     var n = clientWorkspaceN(win)
     if (n < 1 || n > 10) continue
     var lua = moveDispatch(parkSelector(clean, n), win.address)
-    if (lua) dispatches.push(lua)
+    if (lua) {
+      dispatches.push(lua)
+      seen[stripAddress(win.address)] = true
+    }
+  }
+  // Leftover lots of this slug can sit on a visible named workspace
+  // (omadesk-<slug>-N without special:). Re-home them onto the hidden
+  // special so a switch does not leave that desk's windows on screen.
+  var parked = parkedForSlug(stage, clean)
+  for (i = 0; i < parked.length; i++) {
+    var p = parked[i]
+    if (!p || !p.address) continue
+    if (seen[stripAddress(p.address)]) continue
+    var pn = Number(p.n)
+    if (pn < 1 || pn > 10) continue
+    var parkedLua = moveDispatch(parkSelector(clean, pn), p.address)
+    if (parkedLua) dispatches.push(parkedLua)
   }
   return { slug: clean, dispatches: dispatches, batch: joinBatch(dispatches) }
 }

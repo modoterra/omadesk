@@ -1529,10 +1529,66 @@ test("53 named close while here also closes leaked lots of that desk", function(
   assert.ok(restoreAddrs.indexOf("0xunsaved01") === -1)
   const parkAddrs = switched.park.dispatches.join(" ")
   assert.ok(parkAddrs.indexOf("0xhere01") >= 0)
-  assert.ok(parkAddrs.indexOf("0xleak01") === -1)
+  const leakPark = switched.park.dispatches.filter((d) => d.indexOf("0xleak01") >= 0)[0]
+  assert.ok(leakPark)
+  assert.ok(leakPark.indexOf('workspace = "special:omadesk-writing-2"') >= 0)
   assert.ok(parkAddrs.indexOf("0xcall01") === -1)
   assert.ok(parkAddrs.indexOf("0xunsaved01") === -1)
   assert.ok(parkAddrs.indexOf("0xsc") === -1)
+})
+
+test("54 park hides leftover lots of the outgoing desk, not call or unsaved", function() {
+  const stage = {
+    windows: [
+      { address: "0xhere01", workspace: 1, class: "dev.zed.Zed" },
+      { address: "0xsc", workspace: "special:scratchpad", class: "foot" }
+    ],
+    parked: [
+      { slug: "writing", n: 2, address: "0xleak01", class: "com.mitchellh.ghostty" },
+      { slug: "call", n: 1, address: "0xcall01", class: "chromium" },
+      { slug: "unnamed", n: 1, address: "0xunsaved01", class: "foot" }
+    ]
+  }
+  const switched = model.parkPlan(stage, "writing", "call", { id: "call" })
+  const parkBlob = switched.park.dispatches.join(" ")
+  assert.ok(parkBlob.indexOf("0xhere01") >= 0)
+  assert.ok(parkBlob.indexOf('workspace = "special:omadesk-writing-1"') >= 0)
+  const leak = switched.park.dispatches.filter((d) => d.indexOf("0xleak01") >= 0)[0]
+  assert.ok(leak)
+  assert.ok(leak.indexOf('workspace = "special:omadesk-writing-2"') >= 0)
+  assert.ok(parkBlob.indexOf("0xcall01") === -1)
+  assert.ok(parkBlob.indexOf("0xunsaved01") === -1)
+  assert.ok(parkBlob.indexOf("0xsc") === -1)
+  switched.park.dispatches.forEach((lua) => {
+    assert.ok(lua.indexOf("special:omadesk-writing-") >= 0)
+    assert.ok(lua.indexOf("scratchpad") === -1)
+  })
+  const restoreBlob = switched.restore.dispatches.join(" ")
+  assert.ok(restoreBlob.indexOf("0xcall01") >= 0)
+  assert.ok(restoreBlob.indexOf("0xleak01") === -1)
+  assert.ok(restoreBlob.indexOf("0xhere01") === -1)
+  assert.ok(restoreBlob.indexOf("0xunsaved01") === -1)
+  const fixtures = model.parseStage(clientsText, workspacesText)
+  const fromFixtures = model.parkPlan(fixtures, "writing", "call", { id: "call" })
+  const parkedWriting = fromFixtures.park.dispatches.filter((d) => d.indexOf("0x55f11fe15bbb") >= 0)[0]
+  assert.ok(parkedWriting)
+  assert.ok(parkedWriting.indexOf('workspace = "special:omadesk-writing-1"') >= 0)
+  const restoreFix = fromFixtures.restore.dispatches.join(" ")
+  assert.ok(restoreFix.indexOf("0x55f11fe15bbb") === -1)
+  assert.ok(restoreFix.indexOf("0x55f11fe15ccc") >= 0)
+  assert.ok(restoreFix.indexOf("0x55f11fe15aaa") === -1)
+  const toWriting = model.parkPlan(stage, "unnamed", "writing", { id: "writing" })
+  const fromUnnamed = toWriting.park.dispatches.join(" ")
+  assert.ok(fromUnnamed.indexOf("0xhere01") >= 0)
+  const unsavedLot = toWriting.park.dispatches.filter((d) => d.indexOf("0xunsaved01") >= 0)[0]
+  assert.ok(unsavedLot)
+  assert.ok(unsavedLot.indexOf('workspace = "special:omadesk-unnamed-1"') >= 0)
+  assert.ok(fromUnnamed.indexOf("0xcall01") === -1)
+  assert.ok(fromUnnamed.indexOf("0xleak01") === -1)
+  const writingRestore = toWriting.restore.dispatches.join(" ")
+  assert.ok(writingRestore.indexOf("0xleak01") >= 0)
+  assert.ok(writingRestore.indexOf("0xunsaved01") === -1)
+  assert.ok(writingRestore.indexOf("0xhere01") === -1)
 })
 
 test("52 live tiles use n not id and skip empty workspaces", function() {
