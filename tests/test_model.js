@@ -430,6 +430,7 @@ test("20 extras helpers, cards, currentSlug, guessExec", function() {
   assert.strictEqual(cards[0].here, true)
   assert.strictEqual(cards[0].tiles[0].label, "Zed · charcana")
   assert.strictEqual(cards.filter((c) => c.kind === "new")[0].name, "+ New Desk")
+  assert.strictEqual(cards.filter((c) => c.kind === "new")[0].meta, "Enter Starts Empty")
   const filtered = model.pickerCards(model.demoDesks(), "ca")
   assert.strictEqual(filtered[0].name, "Call")
   assert.strictEqual(filtered[0].dnd, true)

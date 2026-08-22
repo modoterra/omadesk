@@ -487,7 +487,7 @@ Item {
   }
 
   function newDeskCard() {
-    return { kind: "new", name: "+ New Desk", meta: "Enter starts empty", tiles: [] }
+    return { kind: "new", name: "+ New Desk", meta: "Enter Starts Empty", tiles: [] }
   }
 
   function rebuildCards() {
@@ -2260,36 +2260,34 @@ Item {
           }
         }
 
-        BorderSurface {
+        CursorSurface {
           visible: deskGrid.visible && root.newDeskIndex >= 0
           width: parent.width
-          implicitHeight: newDeskBody.implicitHeight + Style.space(24)
-          color: root.cardFill(root.cursorIndex === root.newDeskIndex, false)
-          borderSpec: root.cardBorderSpec(root.cursorIndex === root.newDeskIndex, false)
-          radius: Style.cornerRadius
+          implicitHeight: newDeskBody.implicitHeight + Style.spacing.rowPaddingX
+          hasCursor: root.cursorIndex === root.newDeskIndex
+          foreground: root.foreground
 
           Column {
             id: newDeskBody
-            width: parent.width - Style.space(24)
             anchors.left: parent.left
             anchors.right: parent.right
-            anchors.top: parent.top
-            anchors.margins: Style.space(12)
-            spacing: Style.space(6)
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.leftMargin: Style.space(10)
+            anchors.rightMargin: Style.space(10)
+            spacing: Style.space(1)
 
             Text {
-              text: "+ New Desk"
+              text: String((root.cardAt(root.newDeskIndex) && root.cardAt(root.newDeskIndex).name) || "+ New Desk")
               color: root.foreground
               font.family: root.fontFamily
-              font.pixelSize: Style.font.title
-              font.bold: true
+              font.pixelSize: Style.font.body
             }
 
             Text {
-              text: "Enter starts empty"
+              text: String((root.cardAt(root.newDeskIndex) && root.cardAt(root.newDeskIndex).meta) || "Enter Starts Empty")
               color: root.dim
               font.family: root.fontFamily
-              font.pixelSize: Style.font.bodySmall
+              font.pixelSize: Style.font.caption
             }
           }
 
