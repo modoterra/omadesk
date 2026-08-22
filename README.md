@@ -72,11 +72,11 @@ o.bind("SUPER + D", "Desks", "omarchy-shell shell toggle com.mdtrr.omadesk")
 | j / k, arrows, h l | move cursor |
 | 1–9 | jump to card |
 | click a workspace tile | switch onto that workspace |
-| enter | switch, return to **Unsaved**, or start an empty unsaved desk on **+ new desk** |
+| enter | switch, return to **Unsaved**, or start an empty unsaved desk on **+ New Desk** |
 | n | save current as a named desk |
 | s | update desk you are on |
 | r | rename (display name; parking id stays) |
-| e | extras (DND leave/on/off, launch missing, theme leave or set) |
+| e | extras (DND Leave/On/Off, launch missing, theme Leave or Set) |
 | x | close every window on the highlighted desk (recipe stays) |
 | o | open the recipe in the background (parked lots if you are on another desk) |
 | del | forget, with confirm (parked windows return to 1–10) |

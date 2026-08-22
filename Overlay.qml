@@ -18,15 +18,14 @@ Item {
   property int cursorIndex: 0
   property var desksState: ({ version: 1, currentId: null, desks: [] })
   property var cards: []
+  property var gridCards: []
   property var stage: ({})
   property string nameText: ""
   property var targetDesk: null
   property var extrasDesk: null
   property var extrasDraft: ({ dnd: "leave", theme: "leave", launchMissing: true })
   property var forgetDesk: null
-  property int forgetIndex: 0
   property var closeDesk: null
-  property int closeIndex: 0
   property bool busy: false
   property bool desksDirReady: false
   property bool debugDemo: false
@@ -50,24 +49,23 @@ Item {
   property var themeNames: []
   property string pendingForgetId: ""
 
-  property color background: Color.menu.background
-  property color foreground: Color.menu.text
-  property color border: Color.menu.border
-  property var borderSpec: Border.surfaceSpec("menu", "border", border, Math.max(1, Style.space(2)))
-  property color scrim: Color.menu.scrim
-  property color selectedBackground: Color.menu.selectedBackground
-  property color fill: Util.alpha(Color.menu.text, 0.04)
-  property color fillHover: Color.menu.selectedBackground
-  property color fillSelected: Util.alpha(Color.menu.text, 0.18)
-  property color borderSoft: Util.alpha(Color.menu.text, 0.18)
-  property color tileFill: Util.alpha(Color.menu.text, 0.06)
-  property color muted: Color.muted
   property color accent: Color.accent
   property color urgent: Color.urgent
+  property color background: Color.popups.background
+  property color foreground: Color.popups.text
+  property color border: Color.popups.border
+  property var borderSpec: Border.surfaceSpec("popups", "border", border, Math.max(1, Style.space(2)))
+  property color scrim: Color.menu.scrim
+  property color selectedBackground: Style.selectedFillFor(foreground, accent)
+  property color fill: Style.normalFillFor(foreground, accent)
+  property color fillHover: Style.hoverFillFor(foreground, accent)
+  property color fillSelected: Style.selectedFillFor(foreground, accent)
+  property color borderSoft: Style.normalBorderFor(foreground, accent)
+  property color tileFill: Style.normalFillFor(foreground, accent)
+  property color dim: Qt.darker(foreground, 1.4)
   readonly property int cornerRadius: Style.cornerRadius
-  property string fontFamily: Style.font.menuFamily
-  property int contentMargin: Style.space(16)
-  property int headerHeight: Math.max(Style.space(34), Style.font.heading + Style.spacing.controlPaddingY)
+  property string fontFamily: Style.font.family
+  property int contentMargin: Style.spacing.popupPadding
   property int cardWidth: Math.min(Style.space(680), panel.width - Style.gapsOut * 2)
   property int gridGap: Style.space(8)
   property int cellWidth: Math.max(1, Math.floor((cardWidth - card.contentLeftInset - card.contentRightInset - gridGap) / 2))
@@ -267,10 +265,58 @@ Item {
     root.extrasDraft = next
   }
 
-  function themeChipLabel() {
+  readonly property string themeChipText: {
     var theme = root.extrasDraft && root.extrasDraft.theme ? String(root.extrasDraft.theme) : "leave"
-    if (!theme || theme === "leave") return "set…"
+    if (!theme || theme === "leave") return "Set…"
     return theme
+  }
+
+  readonly property string headerTitleText: {
+    if (root.filterOpen) return root.filterText || "Search desks…"
+    if (root.mode === "save") return "Save Current Desk"
+    if (root.mode === "rename") return "Rename"
+    if (root.mode === "extras" && root.extrasPickingTheme) return "Theme"
+    if (root.mode === "extras" && root.extrasDesk) return String(root.extrasDesk.name || "Extras")
+    return "Desks"
+  }
+
+  readonly property string headerMetaText: {
+    if (root.filterOpen) return ""
+    if (root.mode === "extras" && root.extrasPickingTheme) return "Pick a theme"
+    if (root.mode === "extras") return "Desk extras"
+    if (root.mode === "picker" && !root.pickerEmpty) return "Type / to filter"
+    return ""
+  }
+
+  readonly property string forgetMessageText: {
+    var name = (root.forgetDesk && root.forgetDesk.name) ? String(root.forgetDesk.name) : "this desk"
+    return "Forget " + name + "? Parked windows return to 1–10. Nothing is killed."
+  }
+
+  readonly property string closeMessageText: {
+    var name = (root.closeDesk && root.closeDesk.name) ? String(root.closeDesk.name) : "this desk"
+    return "Close every window in " + name + "? The recipe stays. Scratchpad is not touched."
+  }
+
+  readonly property bool showingPicker: root.mode === "picker" || root.mode === "forget" || root.mode === "close"
+  readonly property int newDeskIndex: {
+    var list = root.cards || []
+    for (var i = 0; i < list.length; i++) {
+      if (list[i] && list[i].kind === "new") return i
+    }
+    return -1
+  }
+
+  function cardFill(hasCursor, isHere) {
+    if (isHere) return root.fillSelected
+    if (hasCursor) return root.fillHover
+    return root.fill
+  }
+
+  function cardBorderSpec(hasCursor, isHere) {
+    if (hasCursor) return Border.controlSpec("hover-cursor", root.foreground, root.accent)
+    if (isHere) return Border.controlSpec("selected", root.foreground, root.accent)
+    return Border.controlSpec("normal", root.foreground, root.accent)
   }
 
   function beginThemePick() {
@@ -398,21 +444,21 @@ Item {
     for (var i = 0; i < tiles.length; i++) {
       if (!tiles[i].vacant) used += 1
     }
-    var when = "now"
-    if (here) when = "now"
+    var when = "Now"
+    if (here) when = "Now"
     else if (desk && desk.lastUsedLabel) when = String(desk.lastUsedLabel)
     else {
       var then = NaN
       if (desk && desk.lastUsed != null && desk.lastUsed !== "") then = Number(desk.lastUsed)
       if (!isFinite(then) && desk && desk.updatedAt) then = Date.parse(desk.updatedAt)
       var delta = Date.now() - then
-      if (!isFinite(then) || !isFinite(delta) || delta < 60000) when = "now"
-      else if (delta < 3600000) when = Math.round(delta / 60000) + " min ago"
-      else if (delta < 86400000) when = Math.round(delta / 3600000) + " hours ago"
-      else if (delta < 172800000) when = "yesterday"
-      else when = Math.round(delta / 86400000) + " days ago"
+      if (!isFinite(then) || !isFinite(delta) || delta < 60000) when = "Now"
+      else if (delta < 3600000) when = Math.round(delta / 60000) + " Minutes Ago"
+      else if (delta < 86400000) when = Math.round(delta / 3600000) + " Hours Ago"
+      else if (delta < 172800000) when = "Yesterday"
+      else when = Math.round(delta / 86400000) + " Days Ago"
     }
-    return used + " space" + (used === 1 ? "" : "s") + " · last used " + when
+    return used + " Space" + (used === 1 ? "" : "s") + " · Last Used " + when
   }
 
   function deskToCard(desk) {
@@ -441,7 +487,7 @@ Item {
   }
 
   function newDeskCard() {
-    return { kind: "new", name: "+ new desk", meta: "enter starts empty", tiles: [] }
+    return { kind: "new", name: "+ New Desk", meta: "Enter starts empty", tiles: [] }
   }
 
   function rebuildCards() {
@@ -491,6 +537,11 @@ Item {
         cards[t].dnd = root.extrasOf(src).dnd === "on"
     }
     root.cards = cards
+    var grid = []
+    for (var g = 0; g < cards.length; g++) {
+      if (cards[g] && cards[g].kind !== "new") grid.push({ index: g, card: cards[g] })
+    }
+    root.gridCards = grid
     if (root.cursorIndex >= cards.length) root.cursorIndex = Math.max(0, cards.length - 1)
     if (root.cursorIndex < 0) root.cursorIndex = 0
   }
@@ -650,7 +701,7 @@ Item {
     if (!desk) return
     root.mode = "forget"
     root.forgetDesk = desk
-    root.forgetIndex = 0
+    if (confirmDialog) confirmDialog.selectedIndex = 0
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
@@ -670,7 +721,7 @@ Item {
       return
     }
     root.mode = "close"
-    root.closeIndex = 0
+    if (confirmDialog) confirmDialog.selectedIndex = 0
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
@@ -1522,26 +1573,12 @@ Item {
     }
   }
 
-  function handleForgetKey(event) {
-    if (event.key === Qt.Key_Left || event.key === Qt.Key_Right || event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab || event.text === "h" || event.text === "l") {
-      root.forgetIndex = root.forgetIndex === 0 ? 1 : 0
+  function handleConfirmKey(event) {
+    if (confirmDialog && confirmDialog.handleKey(event)) {
       event.accepted = true
-    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-      if (root.forgetIndex === 1) root.confirmForget()
-      else root.cancelDialog()
-      event.accepted = true
+      return true
     }
-  }
-
-  function handleCloseKey(event) {
-    if (event.key === Qt.Key_Left || event.key === Qt.Key_Right || event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab || event.text === "h" || event.text === "l") {
-      root.closeIndex = root.closeIndex === 0 ? 1 : 0
-      event.accepted = true
-    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-      if (root.closeIndex === 1) root.confirmClose()
-      else root.cancelDialog()
-      event.accepted = true
-    }
+    return false
   }
 
   function handleExtrasKey(event) {
@@ -1706,71 +1743,30 @@ Item {
     }
   }
 
-  component ChromeButton: Rectangle {
-    id: btn
+  component StatusPill: BorderSurface {
+    id: pill
     property string label: ""
-    property bool primary: false
-    property bool danger: false
-    property bool hot: false
-    signal clicked()
+    property color tone: root.dim
 
-    color: primary || hot ? root.fillSelected : root.fill
-    border.width: 1
-    border.color: danger ? Util.alpha(root.urgent, 0.45)
-      : (primary || hot ? Util.alpha(root.foreground, 0.55) : root.border)
-    implicitWidth: labelText.implicitWidth + Style.space(24)
-    implicitHeight: labelText.implicitHeight + Style.space(14)
+    color: "transparent"
+    borderSpec: Border.controlSpec("normal", pill.tone, root.accent)
+    radius: Style.cornerRadius
+    implicitWidth: pillLabel.implicitWidth + Style.space(10)
+    implicitHeight: pillLabel.implicitHeight + Style.space(4)
 
     Text {
-      id: labelText
+      id: pillLabel
       anchors.centerIn: parent
-      text: btn.label
-      color: btn.danger ? root.urgent : root.foreground
+      text: pill.label
+      color: pill.tone
       font.family: root.fontFamily
-      font.pixelSize: Style.font.subtitle
-    }
-
-    MouseArea {
-      anchors.fill: parent
-      hoverEnabled: true
-      cursorShape: Qt.PointingHandCursor
-      onClicked: btn.clicked()
+      font.pixelSize: Style.font.caption
+      font.bold: true
+      font.letterSpacing: 1
     }
   }
 
-  component ChoiceChip: Rectangle {
-    id: chip
-    property string label: ""
-    property bool on: false
-    property bool enabledChip: true
-    signal clicked()
-
-    color: chip.on ? root.fillSelected : "transparent"
-    border.width: 1
-    border.color: chip.on ? Util.alpha(root.foreground, 0.45) : root.borderSoft
-    opacity: chip.enabledChip ? 1 : 0.45
-    implicitWidth: chipLabel.implicitWidth + Style.space(16)
-    implicitHeight: chipLabel.implicitHeight + Style.space(6)
-
-    Text {
-      id: chipLabel
-      anchors.centerIn: parent
-      text: chip.label
-      color: chip.on ? root.foreground : root.muted
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.body
-    }
-
-    MouseArea {
-      anchors.fill: parent
-      enabled: chip.enabledChip
-      hoverEnabled: true
-      cursorShape: chip.enabledChip ? Qt.PointingHandCursor : Qt.ArrowCursor
-      onClicked: chip.clicked()
-    }
-  }
-
-  component WorkspaceTile: Rectangle {
+  component WorkspaceTile: BorderSurface {
     id: tile
     property var tileData: ({})
     property bool compact: false
@@ -1784,7 +1780,7 @@ Item {
       if (n >= 1 && n <= 10) return String(n)
       return ""
     }
-    readonly property string tileLabel: tile.tileData ? String(tile.tileData.label || (tile.vacant ? "empty" : "")) : ""
+    readonly property string tileLabel: tile.tileData ? String(tile.tileData.label || (tile.vacant ? "Empty" : "")) : ""
     readonly property var panes: tile.tileData && tile.tileData.panes ? tile.tileData.panes : []
     readonly property var under: tile.tileData && tile.tileData.under ? tile.tileData.under : []
     readonly property bool hasUnder: !tile.vacant && tile.under && tile.under.length > 0
@@ -1794,9 +1790,8 @@ Item {
     readonly property int iconPad: 4
 
     color: tile.vacant ? "transparent" : root.tileFill
-    border.width: 1
-    border.color: tile.vacant ? root.borderSoft : Util.alpha(root.foreground, 0.12)
-    radius: 0
+    borderSpec: Border.controlSpec("normal", root.foreground, root.accent)
+    radius: Style.cornerRadius
     readonly property real aspect: {
       var a = Number(tile.tileData && tile.tileData.aspect)
       if (isFinite(a) && a >= 0.3 && a <= 5) return a
@@ -1828,9 +1823,9 @@ Item {
           width: Math.max(Style.space(8), map.width * (isFinite(pw) ? pw : 0) - tile.paneGap)
           height: Math.max(Style.space(8), map.height * (isFinite(ph) ? ph : 0) - tile.paneGap)
           color: Util.alpha(root.foreground, modelData && modelData.floating ? 0.10 : 0.05)
-          border.width: 1
-          border.color: Util.alpha(root.foreground, 0.22)
-          radius: 3
+          border.width: Style.normalBorderWidth
+          border.color: Style.normalBorderFor(root.foreground, root.accent)
+          radius: Style.cornerRadius
 
           Image {
             id: paneIcon
@@ -1934,7 +1929,7 @@ Item {
         id: emptyLabel
         anchors.centerIn: parent
         text: "Empty"
-        color: root.muted
+        color: root.dim
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
       }
@@ -2033,12 +2028,8 @@ Item {
             }
             return
           }
-          if (root.mode === "forget") {
-            root.handleForgetKey(event)
-            return
-          }
-          if (root.mode === "close") {
-            root.handleCloseKey(event)
+          if (root.mode === "forget" || root.mode === "close") {
+            root.handleConfirmKey(event)
             return
           }
           if (root.mode === "extras") {
@@ -2064,43 +2055,40 @@ Item {
         anchors.topMargin: card.contentTopInset
         anchors.leftMargin: card.contentLeftInset
         anchors.rightMargin: card.contentRightInset
-        spacing: Style.space(8)
+        spacing: Style.space(12)
 
-        Item {
+        PanelHero {
+          visible: !root.filterOpen
           width: parent.width
-          height: root.headerHeight
+          title: root.headerTitleText
+          meta: root.headerMetaText
+          foreground: root.foreground
+          fontFamily: root.fontFamily
 
-          Text {
-            id: titleText
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            text: root.mode === "save" ? "Save current desk"
-              : (root.mode === "rename" ? "Rename"
-              : (root.mode === "extras" && root.extrasPickingTheme ? "Theme"
-              : (root.mode === "extras" && root.extrasDesk ? String(root.extrasDesk.name || "")
-              : (root.mode === "forget" && root.forgetDesk ? "Forget " + String(root.forgetDesk.name || "") + "?"
-              : (root.mode === "close" && root.closeDesk ? "Close " + String(root.closeDesk.name || "") + "?"
-              : "Desks")))))
-            color: root.foreground
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.heading
-            font.weight: Font.Medium
+          iconComponent: Component {
+            Text {
+              text: "󰍺"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.display
+            }
           }
+        }
 
-          Text {
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            visible: (root.mode === "picker" && !root.pickerEmpty) || root.mode === "extras"
-            text: root.mode === "extras" ? (root.extrasPickingTheme ? "pick a theme" : "desk extras") : (root.filterOpen ? "/" + (root.filterText || "") : "type / to filter")
-            color: root.muted
-            font.family: root.fontFamily
-            font.pixelSize: root.mode === "extras" ? Style.font.caption : (root.filterText ? Style.font.heading : Style.font.bodySmall)
-          }
+        Text {
+          visible: root.filterOpen
+          width: parent.width
+          text: root.filterText || "Search desks…"
+          opacity: root.filterText ? 1 : 0.58
+          color: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.heading
+          elide: Text.ElideRight
         }
 
         Column {
           width: parent.width
-          visible: root.pickerEmpty
+          visible: root.pickerEmpty && root.showingPicker
           spacing: Style.space(18)
           topPadding: Style.space(20)
           bottomPadding: Style.space(8)
@@ -2139,15 +2127,18 @@ Item {
           Text {
             width: parent.width
             text: "A desk is the current 1–10 workspaces, given a name. Switching parks this room and brings the other one back."
-            color: root.muted
+            color: root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.body
             wrapMode: Text.WordWrap
           }
 
-          ChromeButton {
-            label: "Save current as a desk"
-            primary: true
+          Button {
+            text: "Save Current as a Desk"
+            bordered: true
+            selected: true
+            foreground: root.foreground
+            fontFamily: root.fontFamily
             onClicked: root.openSave()
           }
         }
@@ -2155,34 +2146,31 @@ Item {
         Grid {
           id: deskGrid
           width: parent.width
-          visible: root.mode === "picker" && !root.pickerEmpty
+          visible: root.showingPicker && !root.pickerEmpty
           columns: 2
           columnSpacing: root.gridGap
           rowSpacing: root.gridGap
 
           Repeater {
-            model: deskGrid.visible ? root.cards : []
+            model: deskGrid.visible ? root.gridCards : []
 
-            delegate: Rectangle {
-              required property int index
+            delegate: BorderSurface {
               required property var modelData
 
-              readonly property var card: modelData || ({})
-              readonly property int cardIndex: index
-              readonly property bool isNew: card.kind === "new"
+              readonly property var card: (modelData && modelData.card) || ({})
+              readonly property int cardIndex: modelData && modelData.index != null ? modelData.index : 0
               readonly property bool isUnsaved: card.kind === "unsaved"
-              readonly property bool hasCursor: index === root.cursorIndex
+              readonly property bool hasCursor: cardIndex === root.cursorIndex
               readonly property bool isHere: !!card.here
 
               width: root.cellWidth
-              implicitHeight: (isNew ? newBody.implicitHeight : deskBody.implicitHeight) + Style.space(24)
-              color: isNew ? (hasCursor ? root.fillHover : "transparent") : (isHere ? root.fillSelected : (hasCursor ? root.fillHover : root.fill))
-              border.width: 1
-              border.color: hasCursor ? Util.alpha(root.foreground, 0.55) : root.borderSoft
+              implicitHeight: deskBody.implicitHeight + Style.space(24)
+              color: root.cardFill(hasCursor, isHere)
+              borderSpec: root.cardBorderSpec(hasCursor, isHere)
+              radius: Style.cornerRadius
 
               Column {
                 id: deskBody
-                visible: !isNew
                 width: parent.width - Style.space(24)
                 anchors.left: parent.left
                 anchors.right: parent.right
@@ -2204,7 +2192,7 @@ Item {
                     color: root.foreground
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.title
-                    font.weight: Font.DemiBold
+                    font.bold: true
                     elide: Text.ElideRight
                   }
 
@@ -2214,69 +2202,20 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: Style.space(4)
 
-                    Rectangle {
-                      visible: !!card.here
-                      color: "transparent"
-                      border.width: 1
-                      border.color: Util.alpha(root.accent, 0.55)
-                      implicitWidth: hereText.implicitWidth + Style.space(12)
-                      implicitHeight: hereText.implicitHeight + Style.space(2)
-                      Text {
-                        id: hereText
-                        anchors.centerIn: parent
-                        text: "here"
-                        color: root.accent
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.caption
-                      }
+                    StatusPill {
+                      visible: !isUnsaved && card.life === "live"
+                      label: "LIVE"
+                      tone: root.accent
                     }
-                    Rectangle {
-                      visible: !isUnsaved
-                      color: "transparent"
-                      border.width: 1
-                      border.color: card.life === "live" ? Util.alpha(root.accent, 0.4) : root.borderSoft
-                      implicitWidth: lifeText.implicitWidth + Style.space(12)
-                      implicitHeight: lifeText.implicitHeight + Style.space(2)
-                      Text {
-                        id: lifeText
-                        anchors.centerIn: parent
-                        text: card.life === "live" ? "live" : "dead"
-                        color: card.life === "live" ? root.accent : root.muted
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.caption
-                      }
-                    }
-                    Rectangle {
+                    StatusPill {
                       visible: !!card.dnd
-                      color: "transparent"
-                      border.width: 1
-                      border.color: Util.alpha(root.urgent, 0.5)
-                      implicitWidth: dndText.implicitWidth + Style.space(12)
-                      implicitHeight: dndText.implicitHeight + Style.space(2)
-                      Text {
-                        id: dndText
-                        anchors.centerIn: parent
-                        text: "dnd"
-                        color: root.urgent
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.caption
-                      }
+                      label: "DND"
+                      tone: root.urgent
                     }
-                    Rectangle {
+                    StatusPill {
                       visible: isUnsaved
-                      color: "transparent"
-                      border.width: 1
-                      border.color: root.borderSoft
-                      implicitWidth: draftText.implicitWidth + Style.space(12)
-                      implicitHeight: draftText.implicitHeight + Style.space(2)
-                      Text {
-                        id: draftText
-                        anchors.centerIn: parent
-                        text: "draft"
-                        color: root.muted
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.caption
-                      }
+                      label: "DRAFT"
+                      tone: root.dim
                     }
                   }
                 }
@@ -2293,7 +2232,7 @@ Item {
                       width: Math.floor((parent.width - Style.space(6) * (root.tileColumns - 1)) / root.tileColumns)
                       height: implicitHeight
                       tileData: modelData
-                      clickable: !isNew
+                      clickable: true
                       onActivated: {
                         root.cursorIndex = cardIndex
                         var n = modelData && modelData.n
@@ -2311,36 +2250,10 @@ Item {
                 Text {
                   width: parent.width
                   text: String(card.meta || "")
-                  color: root.muted
+                  color: root.dim
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.bodySmall
                   elide: Text.ElideRight
-                }
-              }
-
-              Column {
-                id: newBody
-                visible: isNew
-                width: parent.width - Style.space(24)
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.top: parent.top
-                anchors.margins: Style.space(12)
-                spacing: Style.space(10)
-
-                Text {
-                  text: String(card.name || "+ new desk")
-                  color: root.muted
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.title
-                  font.weight: Font.DemiBold
-                }
-
-                Text {
-                  text: String(card.meta || "enter starts empty")
-                  color: root.muted
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.bodySmall
                 }
               }
 
@@ -2349,12 +2262,58 @@ Item {
                 z: -1
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
-                onContainsMouseChanged: if (containsMouse) root.cursorIndex = index
+                onContainsMouseChanged: if (containsMouse) root.cursorIndex = cardIndex
                 onClicked: {
-                  root.cursorIndex = index
+                  root.cursorIndex = cardIndex
                   root.activateHighlighted()
                 }
               }
+            }
+          }
+        }
+
+        BorderSurface {
+          visible: deskGrid.visible && root.newDeskIndex >= 0
+          width: parent.width
+          implicitHeight: newDeskBody.implicitHeight + Style.space(24)
+          color: root.cardFill(root.cursorIndex === root.newDeskIndex, false)
+          borderSpec: root.cardBorderSpec(root.cursorIndex === root.newDeskIndex, false)
+          radius: Style.cornerRadius
+
+          Column {
+            id: newDeskBody
+            width: parent.width - Style.space(24)
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.margins: Style.space(12)
+            spacing: Style.space(6)
+
+            Text {
+              text: "+ New Desk"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.title
+              font.bold: true
+            }
+
+            Text {
+              text: "Enter starts empty"
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+            }
+          }
+
+          MouseArea {
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onContainsMouseChanged: if (containsMouse && root.newDeskIndex >= 0)
+              root.cursorIndex = root.newDeskIndex
+            onClicked: {
+              if (root.newDeskIndex >= 0) root.cursorIndex = root.newDeskIndex
+              root.activateHighlighted()
             }
           }
         }
@@ -2368,45 +2327,26 @@ Item {
             width: parent.width
             spacing: Style.space(6)
 
-            Text {
-              text: "Name"
-              color: root.muted
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
+            PanelSectionHeader {
+              text: "NAME"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
             }
 
-            Rectangle {
+            TextField {
+              id: nameInput
               width: parent.width
-              implicitHeight: Math.max(Style.space(36), nameInput.implicitHeight + Style.space(16))
-              color: root.tileFill
-              border.width: 1
-              border.color: Util.alpha(root.foreground, 0.45)
-
-              TextInput {
-                id: nameInput
-                anchors.fill: parent
-                anchors.leftMargin: Style.space(10)
-                anchors.rightMargin: Style.space(10)
-                verticalAlignment: TextInput.AlignVCenter
-                color: root.foreground
-                selectionColor: Util.alpha(root.accent, 0.35)
-                selectedTextColor: root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.heading
-                clip: true
-                cursorVisible: activeFocus
-                cursorDelegate: Rectangle {
-                  width: 2
-                  color: root.accent
-                }
-                Keys.onPressed: function(event) {
-                  if (event.key === Qt.Key_Escape) {
-                    root.cancelDialog()
-                    event.accepted = true
-                  } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                    root.confirmName()
-                    event.accepted = true
-                  }
+              placeholderText: "Name"
+              foreground: root.foreground
+              accent: root.accent
+              font.family: root.fontFamily
+              Keys.onPressed: function(event) {
+                if (event.key === Qt.Key_Escape) {
+                  root.cancelDialog()
+                  event.accepted = true
+                } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                  root.confirmName()
+                  event.accepted = true
                 }
               }
             }
@@ -2417,11 +2357,10 @@ Item {
             visible: root.mode === "save"
             spacing: Style.space(6)
 
-            Text {
-              text: "Minimap"
-              color: root.muted
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
+            PanelSectionHeader {
+              text: "MINIMAP"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
             }
 
             Grid {
@@ -2441,17 +2380,32 @@ Item {
             }
           }
 
+          Text {
+            width: parent.width
+            text: "Scratchpad stays global and is not stored."
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            wrapMode: Text.WordWrap
+          }
+
           Row {
             spacing: Style.space(8)
 
-            ChromeButton {
-              label: root.mode === "rename" ? "Rename desk" : "Save"
-              primary: true
+            Button {
+              text: root.mode === "rename" ? "Rename Desk" : "Save"
+              bordered: true
+              selected: true
+              foreground: root.foreground
+              fontFamily: root.fontFamily
               onClicked: root.confirmName()
             }
 
-            ChromeButton {
-              label: "Cancel"
+            Button {
+              text: "Cancel"
+              bordered: true
+              foreground: root.foreground
+              fontFamily: root.fontFamily
               onClicked: root.cancelDialog()
             }
           }
@@ -2460,124 +2414,86 @@ Item {
         Column {
           width: parent.width
           visible: root.mode === "extras" && !root.extrasPickingTheme
-          spacing: Style.space(14)
+          spacing: Style.space(12)
 
-          Item {
+          Column {
             width: parent.width
-            implicitHeight: Math.max(dndLabel.implicitHeight, dndRow.implicitHeight)
+            spacing: Style.space(10)
 
-            Text {
-              id: dndLabel
-              anchors.left: parent.left
-              anchors.verticalCenter: parent.verticalCenter
-              text: "Do not disturb"
-              color: root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.subtitle
+            PanelSectionHeader {
+              text: "DO NOT DISTURB"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
             }
 
-            Row {
-              id: dndRow
-              anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
-              spacing: Style.space(6)
+            ButtonGroup {
+              options: [
+                { value: "leave", label: "Leave" },
+                { value: "on", label: "On" },
+                { value: "off", label: "Off" }
+              ]
+              value: root.extrasDraft && root.extrasDraft.dnd ? root.extrasDraft.dnd : "leave"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onChanged: function(v) { root.patchExtras({ dnd: v }) }
+            }
+          }
 
-              ChoiceChip {
-                label: "leave"
-                on: root.extrasDraft.dnd === "leave"
-                onClicked: root.patchExtras({ dnd: "leave" })
-              }
-              ChoiceChip {
-                label: "on"
-                on: root.extrasDraft.dnd === "on"
-                onClicked: root.patchExtras({ dnd: "on" })
-              }
-              ChoiceChip {
-                label: "off"
-                on: root.extrasDraft.dnd === "off"
-                onClicked: root.patchExtras({ dnd: "off" })
+          PanelSeparator { foreground: root.foreground }
+
+          Column {
+            width: parent.width
+            spacing: Style.space(10)
+
+            PanelSectionHeader {
+              text: "THEME"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+            }
+
+            ButtonGroup {
+              options: [
+                { value: "leave", label: "Leave" },
+                { value: "set", label: root.themeChipText }
+              ]
+              value: (!root.extrasDraft || !root.extrasDraft.theme || root.extrasDraft.theme === "leave") ? "leave" : "set"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onChanged: function(v) {
+                if (v === "leave") root.patchExtras({ theme: "leave" })
+                else root.beginThemePick()
               }
             }
           }
 
-          Item {
+          PanelSeparator { foreground: root.foreground }
+
+          Toggle {
             width: parent.width
-            implicitHeight: Math.max(themeLabel.implicitHeight, themeRow.implicitHeight)
-
-            Text {
-              id: themeLabel
-              anchors.left: parent.left
-              anchors.verticalCenter: parent.verticalCenter
-              text: "Theme"
-              color: root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.subtitle
-            }
-
-            Row {
-              id: themeRow
-              anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
-              spacing: Style.space(6)
-
-              ChoiceChip {
-                label: "leave"
-                on: !root.extrasDraft.theme || root.extrasDraft.theme === "leave"
-                onClicked: root.patchExtras({ theme: "leave" })
-              }
-              ChoiceChip {
-                label: root.themeChipLabel()
-                on: !!(root.extrasDraft.theme && root.extrasDraft.theme !== "leave")
-                onClicked: root.beginThemePick()
-              }
-            }
-          }
-
-          Item {
-            width: parent.width
-            implicitHeight: Math.max(launchLabel.implicitHeight, launchRow.implicitHeight)
-
-            Text {
-              id: launchLabel
-              anchors.left: parent.left
-              anchors.verticalCenter: parent.verticalCenter
-              text: "Launch missing windows"
-              color: root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.subtitle
-            }
-
-            Row {
-              id: launchRow
-              anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
-              spacing: Style.space(6)
-
-              ChoiceChip {
-                label: "yes"
-                on: root.extrasDraft.launchMissing === true
-                onClicked: root.patchExtras({ launchMissing: true })
-              }
-              ChoiceChip {
-                label: "no"
-                on: root.extrasDraft.launchMissing === false
-                onClicked: root.patchExtras({ launchMissing: false })
-              }
-            }
+            label: "Launch Missing Windows"
+            description: "Open recipe windows that are not already running."
+            foreground: root.foreground
+            accent: root.accent
+            fontFamily: root.fontFamily
+            checked: !!(root.extrasDraft && root.extrasDraft.launchMissing)
+            onClicked: root.patchExtras({ launchMissing: !(root.extrasDraft && root.extrasDraft.launchMissing) })
           }
 
           Text {
             width: parent.width
             text: "Leave means a switch does not touch that setting. Theme changes flash the whole desktop, so they stay off unless you ask."
-            color: root.muted
+            color: root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.body
             wrapMode: Text.WordWrap
           }
 
-          ChromeButton {
-            label: "Done"
-            primary: true
+          Button {
+            text: "Done"
+            bordered: true
+            selected: true
+            foreground: root.foreground
+            fontFamily: root.fontFamily
             onClicked: root.confirmExtras()
           }
         }
@@ -2590,7 +2506,7 @@ Item {
           Text {
             width: parent.width
             text: "A switch will run omarchy theme set. Leave keeps whatever is on the desktop."
-            color: root.muted
+            color: root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.body
             wrapMode: Text.WordWrap
@@ -2609,181 +2525,59 @@ Item {
               width: parent.width
               spacing: Style.space(6)
 
-              ChoiceChip {
-                label: "leave"
-                on: !root.extrasDraft.theme || root.extrasDraft.theme === "leave"
+              Button {
+                text: "Leave"
+                bordered: true
+                selected: !root.extrasDraft.theme || root.extrasDraft.theme === "leave"
+                foreground: root.foreground
+                fontFamily: root.fontFamily
                 onClicked: root.pickTheme("leave")
               }
 
               Repeater {
                 model: root.themeNames
-                delegate: ChoiceChip {
+                delegate: Button {
                   required property string modelData
-                  label: modelData
-                  on: root.extrasDraft.theme === modelData
+                  text: modelData
+                  bordered: true
+                  selected: root.extrasDraft.theme === modelData
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
                   onClicked: root.pickTheme(modelData)
                 }
               }
             }
           }
 
-          ChromeButton {
-            label: "Back"
+          Button {
+            text: "Back"
+            bordered: true
+            foreground: root.foreground
+            fontFamily: root.fontFamily
             onClicked: root.extrasPickingTheme = false
           }
         }
+      }
 
-        Column {
-          width: parent.width
-          visible: root.mode === "forget"
-          spacing: Style.space(18)
-          topPadding: Style.space(4)
-
-          Text {
-            width: parent.width
-            text: "The recipe is deleted. Parked windows for " + String((root.forgetDesk && root.forgetDesk.name) || "this desk") + " come back onto 1–10."
-            color: root.foreground
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.title
-            wrapMode: Text.WordWrap
-          }
-
-          Text {
-            width: parent.width
-            text: "Nothing is killed."
-            color: root.muted
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.body
-          }
-
-          Row {
-            spacing: Style.space(8)
-
-            ChromeButton {
-              label: "Cancel"
-              hot: root.forgetIndex === 0
-              onClicked: root.cancelDialog()
-            }
-
-            ChromeButton {
-              label: "Forget desk"
-              danger: true
-              hot: root.forgetIndex === 1
-              onClicked: root.confirmForget()
-            }
-          }
-        }
-
-        Column {
-          width: parent.width
-          visible: root.mode === "close"
-          spacing: Style.space(18)
-          topPadding: Style.space(4)
-
-          Text {
-            width: parent.width
-            text: "Every window in " + String((root.closeDesk && root.closeDesk.name) || "this desk") + " will quit. The recipe stays, so you can open them again in the background."
-            color: root.foreground
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.title
-            wrapMode: Text.WordWrap
-          }
-
-          Text {
-            width: parent.width
-            text: "Scratchpad is not touched."
-            color: root.muted
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.body
-          }
-
-          Row {
-            spacing: Style.space(8)
-
-            ChromeButton {
-              label: "Cancel"
-              hot: root.closeIndex === 0
-              onClicked: root.cancelDialog()
-            }
-
-            ChromeButton {
-              label: "Close windows"
-              danger: true
-              hot: root.closeIndex === 1
-              onClicked: root.confirmClose()
-            }
-          }
-        }
-
-        Item {
-          width: parent.width
-          visible: root.mode === "picker" || root.mode === "save" || root.mode === "rename"
-          implicitHeight: Style.space(22)
-
-          Row {
-            visible: root.mode === "picker" && root.pickerEmpty
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: 0
-            Text { text: "n"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-            Text { text: " save current"; color: root.muted; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-          }
-
-          Row {
-            visible: root.mode === "picker" && root.pickerEmpty
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: 0
-            Text { text: "esc"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-            Text { text: " close"; color: root.muted; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-          }
-
-          Row {
-            visible: root.mode === "picker" && !root.pickerEmpty
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: 0
-            Text { text: "enter"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-            Text { text: " switch · "; color: root.muted; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-            Text { text: "s"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-            Text { text: " update here · "; color: root.muted; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-            Text { text: "n"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-            Text { text: " new · "; color: root.muted; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-            Text { text: "x"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-            Text { text: " close · "; color: root.muted; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-            Text { text: "o"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-            Text { text: " open"; color: root.muted; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-          }
-
-          Row {
-            visible: root.mode === "picker" && !root.pickerEmpty
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: 0
-            Text { text: "r"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-            Text { text: " rename · "; color: root.muted; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-            Text { text: "del"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-            Text { text: " forget"; color: root.muted; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-          }
-
-          Text {
-            visible: root.mode === "save" || root.mode === "rename"
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            text: "Scratchpad stays global and is not stored."
-            color: root.muted
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.bodySmall
-          }
-
-          Row {
-            visible: root.mode === "save" || root.mode === "rename"
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: 0
-            Text { text: "enter"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-            Text { text: root.mode === "rename" ? " rename" : " save"; color: root.muted; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-          }
+      ConfirmDialog {
+        id: confirmDialog
+        anchors.fill: parent
+        opened: root.mode === "forget" || root.mode === "close"
+        z: 10
+        message: root.mode === "forget" ? root.forgetMessageText : root.closeMessageText
+        cancelText: "Cancel"
+        confirmText: root.mode === "forget" ? "Forget" : "Close"
+        background: root.background
+        foreground: root.foreground
+        scrim: root.scrim
+        selectedBackground: root.selectedBackground
+        selectedText: root.accent
+        fontFamily: root.fontFamily
+        cornerRadius: root.cornerRadius
+        onCanceled: root.cancelDialog()
+        onConfirmed: {
+          if (root.mode === "forget") root.confirmForget()
+          else root.confirmClose()
         }
       }
     }

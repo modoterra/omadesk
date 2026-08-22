@@ -899,7 +899,7 @@ function pickerCards(state, query, stage, nowMs) {
       desk: desk
     })
   }
-  if (q === "") cards.push({ kind: "new", name: "+ new desk", meta: "enter starts empty", tiles: [] })
+  if (q === "") cards.push({ kind: "new", name: "+ New Desk", meta: "Enter starts empty", tiles: [] })
   return cards
 }
 
@@ -959,7 +959,7 @@ function unsavedCard(state, stage) {
     here: !!here,
     dnd: false,
     tiles: tiles,
-    meta: here ? "this room is not saved" : "parked untitled room"
+    meta: here ? "This room is not saved" : "Parked untitled room"
   }
 }
 
@@ -971,8 +971,8 @@ function deskSpaceMeta(desk) {
     if (list[i] && list[i].windows && list[i].windows.length) used += 1
   }
   var screens = deskScreenCount(desk)
-  var extra = screens > 1 ? screens + " screens · last used " : "last used "
-  return used + " space" + (used === 1 ? "" : "s") + " · " + extra
+  var extra = screens > 1 ? screens + " Screens · Last Used " : "Last Used "
+  return used + " Space" + (used === 1 ? "" : "s") + " · " + extra
 }
 
 function deskScreenCount(desk) {
@@ -999,30 +999,30 @@ function deskLastUsedMs(desk) {
 }
 
 function formatDeskMeta(desk, nowMs, here) {
-  if (here) return "now"
+  if (here) return "Now"
   var then = deskLastUsedMs(desk)
   if (!isFinite(then)) return ""
   var now = parseNow(nowMs)
   var delta = now - then
   if (delta < 0) delta = 0
-  if (delta < 60000) return "now"
+  if (delta < 60000) return "Now"
   if (delta < 3600000) {
     var mins = Math.floor(delta / 60000)
-    return mins + (mins === 1 ? " minute ago" : " minutes ago")
+    return mins + (mins === 1 ? " Minute Ago" : " Minutes Ago")
   }
   if (delta < 86400000) {
     var hours = Math.floor(delta / 3600000)
-    return hours + (hours === 1 ? " hour ago" : " hours ago")
+    return hours + (hours === 1 ? " Hour Ago" : " Hours Ago")
   }
   var nowDate = new Date(now)
   var thenDate = new Date(then)
   var startToday = new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate()).getTime()
   var startThen = new Date(thenDate.getFullYear(), thenDate.getMonth(), thenDate.getDate()).getTime()
   var dayDiff = Math.round((startToday - startThen) / 86400000)
-  if (dayDiff === 1) return "yesterday"
-  if (dayDiff > 1) return dayDiff + " days ago"
+  if (dayDiff === 1) return "Yesterday"
+  if (dayDiff > 1) return dayDiff + " Days Ago"
   var hours2 = Math.floor(delta / 3600000)
-  return hours2 + (hours2 === 1 ? " hour ago" : " hours ago")
+  return hours2 + (hours2 === 1 ? " Hour Ago" : " Hours Ago")
 }
 
 function isArray(value) {

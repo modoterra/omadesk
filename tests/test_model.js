@@ -429,15 +429,15 @@ test("20 extras helpers, cards, currentSlug, guessExec", function() {
   assert.strictEqual(cards[0].id, "writing")
   assert.strictEqual(cards[0].here, true)
   assert.strictEqual(cards[0].tiles[0].label, "Zed · charcana")
-  assert.strictEqual(cards.filter((c) => c.kind === "new")[0].name, "+ new desk")
+  assert.strictEqual(cards.filter((c) => c.kind === "new")[0].name, "+ New Desk")
   const filtered = model.pickerCards(model.demoDesks(), "ca")
   assert.strictEqual(filtered[0].name, "Call")
   assert.strictEqual(filtered[0].dnd, true)
   assert.ok(!filtered.filter((c) => c.kind === "new").length)
   const now = Date.parse("2026-08-19T16:40:00Z")
-  assert.strictEqual(model.formatDeskMeta({ updatedAt: "2026-08-19T16:40:00Z" }, now), "now")
-  assert.ok(model.formatDeskMeta({ updatedAt: "2026-08-19T13:40:00Z" }, now).indexOf("ago") >= 0)
-  assert.strictEqual(model.formatDeskMeta({ updatedAt: "2026-08-18T16:40:00Z" }, now), "yesterday")
+  assert.strictEqual(model.formatDeskMeta({ updatedAt: "2026-08-19T16:40:00Z" }, now), "Now")
+  assert.ok(model.formatDeskMeta({ updatedAt: "2026-08-19T13:40:00Z" }, now).indexOf("Ago") >= 0)
+  assert.strictEqual(model.formatDeskMeta({ updatedAt: "2026-08-18T16:40:00Z" }, now), "Yesterday")
   assert.strictEqual(
     model.desksPath("/home/hallas"),
     "/home/hallas/.config/omarchy/omadesk/desks.json"
@@ -566,24 +566,24 @@ test("25 last used follows switch, not last save; here is now", function() {
   const now = Date.parse("2026-08-20T22:24:12.680Z")
   assert.strictEqual(
     model.formatDeskMeta({ updatedAt: "2026-08-20T21:58:28.528Z" }, now),
-    "25 minutes ago"
+    "25 Minutes Ago"
   )
   assert.strictEqual(
     model.formatDeskMeta({ updatedAt: "2026-08-20T21:58:28.528Z", lastUsed: used }, now),
-    "now"
+    "Now"
   )
   assert.strictEqual(
     model.formatDeskMeta({ updatedAt: "2026-08-20T21:58:28.528Z", lastUsed: saved }, now),
-    "25 minutes ago"
+    "25 Minutes Ago"
   )
   assert.strictEqual(
     model.formatDeskMeta({ updatedAt: "2026-08-20T21:58:28.528Z", lastUsed: saved }, now, true),
-    "now"
+    "Now"
   )
   const demo = model.demoDesks()
   const cards = model.pickerCards(demo, "")
   const writing = cards.filter((c) => c.id === "writing")[0]
-  assert.ok(writing.meta.indexOf("last used now") >= 0)
+  assert.ok(writing.meta.indexOf("Last Used Now") >= 0)
   const switched = model.useDesk(demo, "call", used)
   assert.strictEqual(switched.currentId, "call")
   const call = switched.desks.filter((d) => d.id === "call")[0]
@@ -592,8 +592,8 @@ test("25 last used follows switch, not last save; here is now", function() {
   assert.strictEqual(writingAfter.lastUsed, used)
   const later = used + 10 * 60000
   const afterCards = model.pickerCards(switched, "", null, later)
-  assert.ok(afterCards.filter((c) => c.id === "call")[0].meta.indexOf("last used now") >= 0)
-  assert.ok(afterCards.filter((c) => c.id === "writing")[0].meta.indexOf("10 minutes ago") >= 0)
+  assert.ok(afterCards.filter((c) => c.id === "call")[0].meta.indexOf("Last Used Now") >= 0)
+  assert.ok(afterCards.filter((c) => c.id === "writing")[0].meta.indexOf("10 Minutes Ago") >= 0)
   const left = model.leaveDesk(switched, used + 120000)
   assert.strictEqual(left.currentId, null)
   assert.strictEqual(left.desks.filter((d) => d.id === "call")[0].lastUsed, used + 120000)
@@ -719,7 +719,7 @@ test("28 restore puts workspaces back on their monitors", function() {
     'hl.dsp.workspace.move({ workspace = "4", monitor = "HDMI-A-1" })'
   )
   const cards = model.pickerCards({ version: 1, currentId: "dual", desks: [desk] }, "")
-  assert.ok(cards[0].meta.indexOf("2 screens") >= 0)
+  assert.ok(cards[0].meta.indexOf("2 Screens") >= 0)
   const woke = model.wakePlan(desk, { windows: [], parked: [], monitors: ["DP-1", "HDMI-A-1"] }, "writing")
   const onHdmi = woke.launches.filter((item) => String(item.workspace).indexOf("omadesk-dual-4") >= 0)[0]
   assert.ok(onHdmi)
@@ -806,7 +806,7 @@ test("30 targetedNamedDesk only resolves a desk card", function() {
   const fromDesk = model.targetedNamedDesk({ kind: "desk", id: "writing", desk: writing }, state)
   assert.strictEqual(fromDesk.id, "writing")
   assert.strictEqual(fromDesk.name, "Writing")
-  assert.strictEqual(model.targetedNamedDesk({ kind: "new", name: "+ new desk" }, state), null)
+  assert.strictEqual(model.targetedNamedDesk({ kind: "new", name: "+ New Desk" }, state), null)
   assert.strictEqual(model.targetedNamedDesk({ kind: "unsaved", name: "Unsaved" }, state), null)
   assert.strictEqual(model.targetedNamedDesk({ kind: "new", id: "writing" }, state), null)
   assert.strictEqual(model.targetedNamedDesk({ kind: "unsaved", id: state.currentId }, state), null)
@@ -1261,7 +1261,7 @@ test("45 empty here with unnamed lots is a parked unsaved room, not a live empty
   const unsaved = cards.filter((c) => c.kind === "unsaved")[0]
   assert.ok(unsaved)
   assert.strictEqual(unsaved.here, false)
-  assert.ok(String(unsaved.meta).indexOf("parked") >= 0)
+  assert.ok(String(unsaved.meta).indexOf("Parked") >= 0)
   const occupied = (unsaved.tiles || []).filter((t) => !t.vacant)
   assert.ok(occupied.length >= 1)
   assert.ok(occupied[0].label.indexOf("foot") >= 0 || occupied[0].label.indexOf("notes") >= 0)
