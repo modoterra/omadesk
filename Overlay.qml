@@ -2492,7 +2492,7 @@ Item {
         Column {
           width: parent.width
           visible: root.mode === "extras" && root.extrasPickingTheme
-          spacing: Style.space(10)
+          spacing: Style.space(12)
 
           Text {
             width: parent.width
