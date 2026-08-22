@@ -1906,7 +1906,13 @@ function isCurrentDesk(desk, currentId) {
 }
 
 function liveWindows(desk, stage, currentId) {
-  if (isCurrentDesk(desk, currentId)) return stageWindows(stage)
+  if (isCurrentDesk(desk, currentId)) {
+    var hereNamed = stageWindows(stage)
+    var leaked = parkedForSlug(stage, desk && desk.id)
+    if (!leaked.length) return hereNamed
+    if (!hereNamed.length) return leaked
+    return hereNamed.concat(leaked)
+  }
   if ((currentId == null || currentId === "") && (!desk || sanitizeSlug(desk.id) === "unnamed")) {
     var here = stageWindows(stage)
     var parked = parkedForSlug(stage, "unnamed")

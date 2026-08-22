@@ -1478,6 +1478,63 @@ test("51 switchFocusWorkspace prefers the clicked workspace", function() {
   assert.strictEqual(model.focusWorkspaceN("null"), null)
 })
 
+test("53 named close while here also closes leaked lots of that desk", function() {
+  const writing = { id: "writing", name: "Writing" }
+  const fixtures = model.parseStage(clientsText, workspacesText)
+  const closeHere = model.closePlan(writing, fixtures, "writing")
+  const hereBlob = closeHere.dispatches.join(" ")
+  assert.ok(hereBlob.indexOf("0x55f11fe15110") >= 0)
+  assert.ok(hereBlob.indexOf("0x55f11fe15bbb") >= 0)
+  assert.ok(hereBlob.indexOf("0x55f11fe15ccc") === -1)
+  assert.ok(hereBlob.indexOf("0x55f11fe15c2c") === -1)
+  assert.ok(hereBlob.indexOf("0x55f11fe15aaa") === -1)
+  assert.ok(hereBlob.indexOf("scratchpad") === -1)
+  const stage = {
+    windows: [
+      { address: "0xhere01", workspace: 1, class: "dev.zed.Zed" },
+      { address: "0xsc", workspace: "special:scratchpad", class: "foot" }
+    ],
+    parked: [
+      { slug: "writing", n: 2, address: "0xleak01", class: "com.mitchellh.ghostty" },
+      { slug: "call", n: 1, address: "0xcall01", class: "chromium" },
+      { slug: "unnamed", n: 1, address: "0xunsaved01", class: "foot" }
+    ]
+  }
+  const plan = model.closePlan(writing, stage, "writing")
+  const blob = plan.dispatches.join(" ")
+  assert.ok(blob.indexOf("0xhere01") >= 0)
+  assert.ok(blob.indexOf("0xleak01") >= 0)
+  assert.ok(blob.indexOf("0xcall01") === -1)
+  assert.ok(blob.indexOf("0xunsaved01") === -1)
+  assert.ok(blob.indexOf("0xsc") === -1)
+  assert.ok(blob.indexOf("scratchpad") === -1)
+  const emptyHere = {
+    windows: [],
+    parked: [
+      { slug: "writing", n: 1, address: "0xleak01", class: "com.mitchellh.ghostty" },
+      { slug: "call", n: 1, address: "0xcall01", class: "chromium" }
+    ]
+  }
+  assert.strictEqual(model.deskLife(writing, emptyHere, "writing"), "live")
+  assert.strictEqual(model.deskLife({ id: "call", name: "Call" }, emptyHere, "writing"), "live")
+  const closeEmpty = model.closePlan(writing, emptyHere, "writing")
+  const emptyBlob = closeEmpty.dispatches.join(" ")
+  assert.ok(emptyBlob.indexOf("0xleak01") >= 0)
+  assert.ok(emptyBlob.indexOf("0xcall01") === -1)
+  const switched = model.parkPlan(stage, "writing", "call", { id: "call" })
+  const restoreAddrs = switched.restore.dispatches.join(" ")
+  assert.ok(restoreAddrs.indexOf("0xcall01") >= 0)
+  assert.ok(restoreAddrs.indexOf("0xleak01") === -1)
+  assert.ok(restoreAddrs.indexOf("0xhere01") === -1)
+  assert.ok(restoreAddrs.indexOf("0xunsaved01") === -1)
+  const parkAddrs = switched.park.dispatches.join(" ")
+  assert.ok(parkAddrs.indexOf("0xhere01") >= 0)
+  assert.ok(parkAddrs.indexOf("0xleak01") === -1)
+  assert.ok(parkAddrs.indexOf("0xcall01") === -1)
+  assert.ok(parkAddrs.indexOf("0xunsaved01") === -1)
+  assert.ok(parkAddrs.indexOf("0xsc") === -1)
+})
+
 test("52 live tiles use n not id and skip empty workspaces", function() {
   const stage = model.parseStage(clientsText, workspacesText)
   const tiles = model.deskTiles(stage)
