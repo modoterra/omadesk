@@ -2475,7 +2475,7 @@ Item {
             text: "Leave means a switch does not touch that setting. Theme changes flash the whole desktop, so they stay off unless you ask."
             color: root.dim
             font.family: root.fontFamily
-            font.pixelSize: Style.font.body
+            font.pixelSize: Style.font.bodySmall
             wrapMode: Text.WordWrap
           }
 
@@ -2499,7 +2499,7 @@ Item {
             text: "A switch will run omarchy theme set. Leave keeps whatever is on the desktop."
             color: root.dim
             font.family: root.fontFamily
-            font.pixelSize: Style.font.body
+            font.pixelSize: Style.font.bodySmall
             wrapMode: Text.WordWrap
           }
 
