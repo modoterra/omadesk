@@ -519,6 +519,7 @@ test("23 unsaved card and +new parks to unnamed lots", function() {
   assert.strictEqual(cards[0].kind, "unsaved")
   assert.strictEqual(cards[0].name, "Unsaved")
   assert.strictEqual(cards[0].here, true)
+  assert.strictEqual(cards[0].meta, "This Room Is Not Saved")
   assert.ok(cards.filter((c) => c.kind === "new").length === 1)
   const parkedUnnamed = {
     windows: [],
@@ -533,6 +534,7 @@ test("23 unsaved card and +new parks to unnamed lots", function() {
   const parkedCards = model.pickerCards(named, "", parkedUnnamed)
   assert.strictEqual(parkedCards[0].kind, "unsaved")
   assert.strictEqual(parkedCards[0].here, false)
+  assert.strictEqual(parkedCards[0].meta, "Parked Untitled Room")
   assert.ok(parkedCards[0].tiles[0].label.indexOf("Zed") >= 0)
   const filtered = model.pickerCards(left, "ca")
   assert.strictEqual(filtered.filter((c) => c.kind === "unsaved").length, 0)
