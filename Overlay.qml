@@ -25,7 +25,6 @@ Item {
   property var extrasDesk: null
   property var extrasDraft: ({ dnd: "leave", theme: "leave", launchMissing: true })
   property var forgetDesk: null
-  property var closeDesk: null
   property bool busy: false
   property bool desksDirReady: false
   property bool debugDemo: false
@@ -86,7 +85,7 @@ Item {
     "      _||     ||_"
   ]
 
-  readonly property string termProbePy: "import os,sys\nfor pid in sys.argv[1:]:\n  try:\n    p=int(pid)\n  except Exception:\n    continue\n  cwd=''\n  try:\n    cwd=os.readlink('/proc/%d/cwd'%p)\n  except Exception:\n    cwd=''\n  cmd=[]\n  children=[]\n  try:\n    children=open('/proc/%d/task/%d/children'%(p,p)).read().split()\n  except Exception:\n    children=[]\n  for c in children:\n    try:\n      raw=open('/proc/%s/cmdline'%c,'rb').read().split(b'\\0')\n      args=[a.decode('utf-8','replace') for a in raw if a]\n    except Exception:\n      args=[]\n    if args:\n      cmd=args\n      break\n  print('\\t'.join([str(p), cwd]+cmd))\n"
+  readonly property string termProbePy: "import os,sys\nSHELLS=set('bash zsh fish sh nu dash'.split())\ndef cmd(pid):\n  try:\n    raw=open('/proc/%d/cmdline'%pid,'rb').read().split(b'\\0')\n    return [a.decode('utf-8','replace') for a in raw if a]\n  except Exception:\n    return []\ndef cwd(pid):\n  try:\n    return os.readlink('/proc/%d/cwd'%pid)\n  except Exception:\n    return ''\ndef kids(pid):\n  try:\n    return [int(x) for x in open('/proc/%d/task/%d/children'%(pid,pid)).read().split()]\n  except Exception:\n    return []\ndef ppid(pid):\n  try:\n    for line in open('/proc/%d/status'%pid):\n      if line.startswith('PPid:'): return int(line.split()[1])\n  except Exception:\n    pass\n  return 0\ndef desc(pid):\n  out=[]; st=kids(pid); seen=set()\n  while st:\n    c=st.pop()\n    if c in seen: continue\n    seen.add(c); out.append(c); st.extend(kids(c))\n  return out\ndef bn(args):\n  if not args: return ''\n  return os.path.basename(args[0]).lower()\ndef pick_cmd(pid):\n  best=[]\n  for c in desc(pid):\n    a=cmd(c)\n    if a and bn(a) not in SHELLS: best=a\n  return best\ndef pick_cwd(pid):\n  d=''\n  for c in desc(pid):\n    a=cmd(c)\n    if a and bn(a) not in SHELLS:\n      x=cwd(c)\n      if x[:1]=='/': d=x\n  return d or cwd(pid)\ndef browser(pid):\n  cur=pid; seen=set(); best=cmd(pid)\n  while cur and cur not in seen:\n    seen.add(cur); a=cmd(cur)\n    if a:\n      best=a\n      if '--type=' not in ' '.join(a): break\n    cur=ppid(cur)\n  return best\nfor pid in sys.argv[1:]:\n  try: p=int(pid)\n  except Exception: continue\n  a=cmd(p); name=bn(a); joined=' '.join(a).lower()\n  if 'chromium' in joined or 'chrome' in name or '--type=' in joined:\n    args=browser(p); d=cwd(p)\n  else:\n    args=pick_cmd(p); d=pick_cwd(p)\n  print('\\t'.join([str(p), d]+args))\n"
 
   function pluginId() {
     return (root.manifest && root.manifest.id) || "com.mdtrr.omadesk"
@@ -145,7 +144,6 @@ Item {
     root.targetDesk = null
     root.extrasDesk = null
     root.forgetDesk = null
-    root.closeDesk = null
     root.extrasPickingTheme = false
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
@@ -293,12 +291,7 @@ Item {
     return "Forget " + name + "? Parked windows return to 1–10. Nothing is killed."
   }
 
-  readonly property string closeMessageText: {
-    var name = (root.closeDesk && root.closeDesk.name) ? String(root.closeDesk.name) : "this desk"
-    return "Close every window in " + name + "? The recipe stays. Scratchpad is not touched."
-  }
-
-  readonly property bool showingPicker: root.mode === "picker" || root.mode === "forget" || root.mode === "close"
+  readonly property bool showingPicker: root.mode === "picker" || root.mode === "forget"
   readonly property int newDeskIndex: {
     var list = root.cards || []
     for (var i = 0; i < list.length; i++) {
@@ -382,9 +375,14 @@ Item {
     var seen = {}
     function add(win) {
       if (!win || win.pid == null) return
+      var want = false
       if (typeof Model.isTerminalClass === "function") {
-        try { if (!Model.isTerminalClass(win)) return } catch (e) { return }
+        try { if (Model.isTerminalClass(win)) want = true } catch (e) {}
       }
+      if (!want && typeof Model.isChromiumClass === "function") {
+        try { if (Model.isChromiumClass(win)) want = true } catch (e) {}
+      }
+      if (!want) return
       var p = Number(win.pid)
       if (!isFinite(p) || p < 1 || seen[p]) return
       seen[p] = true
@@ -703,85 +701,6 @@ Item {
     root.forgetDesk = desk
     if (confirmDialog) confirmDialog.selectedIndex = 0
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
-  }
-
-  function openClose() {
-    if (root.busy) return
-    var card = root.highlightedCard()
-    if (!card || card.kind === "new") return
-    if (card.kind === "unsaved") {
-      root.closeDesk = { id: "unnamed", name: "Unsaved" }
-    } else {
-      var desk = root.highlightedDesk()
-      if (!desk) return
-      root.closeDesk = desk
-    }
-    if (card.kind !== "unsaved" && card.life === "dead") {
-      root.closeDesk = null
-      return
-    }
-    root.mode = "close"
-    if (confirmDialog) confirmDialog.selectedIndex = 0
-    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
-  }
-
-  function confirmClose() {
-    var desk = root.closeDesk
-    if (!desk) { root.cancelDialog(); return }
-    if (root.busy) return
-    root.busy = true
-    root.refreshStage(function(ok) {
-      if (!ok) {
-        root.busy = false
-        return
-      }
-      var plan = null
-      if (typeof Model.closePlan === "function") {
-        try {
-          plan = Model.closePlan(desk, root.stage, root.desksState ? root.desksState.currentId : null)
-        } catch (e) { plan = null }
-      }
-      var batch = root.batchString(plan)
-      root.mode = "picker"
-      root.closeDesk = null
-      if (!batch) {
-        root.busy = false
-        Qt.callLater(function() { keyCatcher.forceActiveFocus() })
-        return
-      }
-      root.pendingRestore = ""
-      root.startBatch(batch, "close")
-    })
-  }
-
-  function wakeHighlighted() {
-    if (root.busy) return
-    var card = root.highlightedCard()
-    if (!card || card.kind === "new" || card.kind === "unsaved") return
-    var desk = root.highlightedDesk()
-    if (!desk) return
-    root.busy = true
-    root.refreshStage(function(ok) {
-      if (!ok) {
-        root.busy = false
-        return
-      }
-      var launches = []
-      if (typeof Model.wakePlan === "function") {
-        try {
-          launches = Model.wakePlan(desk, root.stage, root.desksState ? root.desksState.currentId : null)
-          if (launches && Array.isArray(launches.launches)) launches = launches.launches
-        } catch (e) { launches = [] }
-      }
-      if (!Array.isArray(launches)) launches = []
-      for (var i = 0; i < launches.length; i++) root.launchOne(launches[i])
-      root.busy = false
-      Qt.callLater(function() {
-        root.refreshStage(function() {
-          Qt.callLater(function() { keyCatcher.forceActiveFocus() })
-        })
-      })
-    })
   }
 
   function confirmSave() {
@@ -1357,6 +1276,14 @@ Item {
     var cmd = "uwsm-app --"
     for (var i = 0; i < argv.length; i++)
       cmd += " " + Util.shellQuote(argv[i])
+    var execRules = ""
+    if (typeof Model.launchExecRules === "function") {
+      try { execRules = String(Model.launchExecRules(item) || "") } catch (e) { execRules = "" }
+    }
+    if (execRules) {
+      Quickshell.execDetached(["hyprctl", "dispatch", "exec", "[" + execRules + "]", "uwsm-app", "--"].concat(argv))
+      return
+    }
     var ws = item.workspace !== undefined && item.workspace !== null ? String(item.workspace) : ""
     var mon = item.monitor ? String(item.monitor) : ""
     var rules = []
@@ -1366,7 +1293,6 @@ Item {
       var lua = "hl.dsp.exec_cmd(" + JSON.stringify(cmd) + ", { " + rules.join(", ") + " })"
       Quickshell.execDetached(["hyprctl", "dispatch", lua])
     } else {
-      // placement is best-effort
       Quickshell.execDetached(["uwsm-app", "--"].concat(argv))
     }
   }
@@ -1571,12 +1497,6 @@ Item {
       event.accepted = true
     } else if (!root.filterOpen && event.text === "e") {
       root.openExtras()
-      event.accepted = true
-    } else if (!root.filterOpen && event.text === "x") {
-      root.openClose()
-      event.accepted = true
-    } else if (!root.filterOpen && event.text === "o") {
-      root.wakeHighlighted()
       event.accepted = true
     }
   }
@@ -2058,7 +1978,7 @@ Item {
             }
             return
           }
-          if (root.mode === "forget" || root.mode === "close") {
+          if (root.mode === "forget") {
             root.handleConfirmKey(event)
             return
           }
@@ -2492,7 +2412,7 @@ Item {
           Toggle {
             width: parent.width
             label: "Launch Missing Windows"
-            description: "Open recipe windows that are not already running."
+            description: "After a reboot, open the saved windows when you switch into this desk."
             foreground: root.foreground
             accent: root.accent
             fontFamily: root.fontFamily
@@ -2617,9 +2537,7 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             KeyHint { chord: "enter"; label: "Switch"; sep: true }
             KeyHint { chord: "s"; label: "Update Here"; sep: true }
-            KeyHint { chord: "n"; label: "New"; sep: true }
-            KeyHint { chord: "x"; label: "Close"; sep: true }
-            KeyHint { chord: "o"; label: "Open" }
+            KeyHint { chord: "n"; label: "New" }
           }
 
           Row {
@@ -2656,11 +2574,11 @@ Item {
       ConfirmDialog {
         id: confirmDialog
         anchors.fill: parent
-        opened: root.mode === "forget" || root.mode === "close"
+        opened: root.mode === "forget"
         z: 10
-        message: root.mode === "forget" ? root.forgetMessageText : root.closeMessageText
+        message: root.forgetMessageText
         cancelText: "Cancel"
-        confirmText: root.mode === "forget" ? "Forget" : "Close"
+        confirmText: "Forget"
         background: root.background
         foreground: root.foreground
         scrim: root.scrim
@@ -2669,10 +2587,7 @@ Item {
         fontFamily: root.fontFamily
         cornerRadius: root.cornerRadius
         onCanceled: root.cancelDialog()
-        onConfirmed: {
-          if (root.mode === "forget") root.confirmForget()
-          else root.confirmClose()
-        }
+        onConfirmed: root.confirmForget()
       }
     }
   }

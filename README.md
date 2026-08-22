@@ -24,11 +24,12 @@ parked, restored, or stored.
 
 Live truth while the session is alive is parked window addresses. Two
 Chromiums on two workspaces work during the day because we move those
-addresses. After a reboot that case is best-effort (`chromium --new-window`
-when we have to launch). Workspace tiles show the tiled layout from window
-geometry, with app icons, two per row at the monitor's aspect ratio.
-A terminal that was running a command (not just a shell) is relaunched
-with that command and working directory.
+addresses. A save stores class, exec, Chromium profile, terminal cwd and
+command, and window size. After a reboot, switching into that desk
+relaunches those windows (`chromium --profile-directory=… --new-window`,
+a terminal with its directory and command, floating size and position).
+Workspace tiles show the tiled layout from window geometry, with app
+icons, two per row at the monitor's aspect ratio.
 
 ## Install
 
@@ -76,9 +77,7 @@ o.bind("SUPER + D", "Desks", "omarchy-shell shell toggle com.mdtrr.omadesk")
 | n | save current as a named desk |
 | s | update desk you are on |
 | r | rename (display name; parking id stays) |
-| e | extras (DND Leave/On/Off, launch missing, theme Leave or Set) |
-| x | close every window on the highlighted desk (recipe stays) |
-| o | open the recipe in the background (parked lots if you are on another desk) |
+| e | extras (DND Leave/On/Off, launch missing after reboot, theme Leave or Set) |
 | del | forget, with confirm (parked windows return to 1–10) |
 | esc | close (clear filter first if any) |
 
@@ -90,8 +89,8 @@ omarchy plugin remove com.mdtrr.omadesk
 
 Recipes live in `~/.config/omarchy/omadesk/desks.json`. Forget deletes the
 recipe and brings that desk's parked windows back onto 1–10. A **live** desk
-still has windows (on 1–10 or parked). A **dead** desk is recipe only: `x`
-closes its windows, `o` launches them in the background without switching.
+still has windows (on 1–10 or parked). A **dead** desk is recipe only: switching
+into it after a reboot launches the saved windows if Launch Missing is on.
 Theme extras can leave the current theme or run `omarchy theme set` when you
 switch into that desk.
 

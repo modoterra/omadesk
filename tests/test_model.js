@@ -1725,6 +1725,102 @@ test("52 live tiles use n not id and skip empty workspaces", function() {
   assert.strictEqual(hypr.workspaces[0].windows, 1)
 })
 
+test("57 reboot restore keeps chromium profile, terminal cwd, and floating size", function() {
+  assert.strictEqual(
+    model.profileFromArgv(["chromium", "--profile-directory=Profile 1", "--type=renderer"]),
+    "Profile 1"
+  )
+  same(model.guessExec({ class: "chromium" }), ["chromium", "--new-window"])
+  same(
+    model.guessExec({ class: "chromium", profile: "Profile 1" }),
+    ["chromium", "--profile-directory=Profile 1", "--new-window"]
+  )
+  const stage = {
+    windows: [
+      {
+        pid: 10,
+        class: "chromium",
+        workspace: 2,
+        floating: true,
+        x: 100,
+        y: 80,
+        w: 1280,
+        h: 800,
+        address: "0xa"
+      },
+      {
+        pid: 11,
+        class: "com.mitchellh.ghostty",
+        workspace: 3,
+        x: 0,
+        y: 0,
+        w: 900,
+        h: 700,
+        address: "0xb"
+      }
+    ],
+    workspaces: [
+      {
+        n: 2,
+        windows: [{
+          pid: 10,
+          class: "chromium",
+          workspace: 2,
+          floating: true,
+          x: 100,
+          y: 80,
+          w: 1280,
+          h: 800
+        }]
+      },
+      {
+        n: 3,
+        windows: [{
+          pid: 11,
+          class: "com.mitchellh.ghostty",
+          workspace: 3,
+          x: 0,
+          y: 0,
+          w: 900,
+          h: 700
+        }]
+      }
+    ]
+  }
+  model.applyTerminalHints(stage, [
+    { pid: 10, cwd: "/home/hallas", cmd: ["chromium", "--profile-directory=Profile 1"] },
+    { pid: 11, cwd: "/home/hallas/Work/omadesk", cmd: ["nvim", "Overlay.qml"] }
+  ])
+  assert.strictEqual(stage.windows[0].profile, "Profile 1")
+  assert.ok(!stage.windows[0].cmd)
+  assert.strictEqual(stage.windows[1].cwd, "/home/hallas/Work/omadesk")
+  same(stage.windows[1].cmd, ["nvim", "Overlay.qml"])
+  const recipe = model.snapshotRecipe(stage, "Work", model.defaultExtras(), 2, "2026-08-22T12:00:00Z")
+  const chrome = recipe.workspaces.filter((w) => w.n === 2)[0].windows[0]
+  assert.strictEqual(chrome.profile, "Profile 1")
+  same(chrome.exec, ["chromium", "--profile-directory=Profile 1", "--new-window"])
+  assert.strictEqual(chrome.w, 1280)
+  assert.strictEqual(chrome.h, 800)
+  assert.strictEqual(chrome.floating, true)
+  const term = recipe.workspaces.filter((w) => w.n === 3)[0].windows[0]
+  assert.strictEqual(term.cwd, "/home/hallas/Work/omadesk")
+  same(term.cmd, ["nvim", "Overlay.qml"])
+  const launches = model.launchMissingPlan(recipe, { windows: [], parked: [] }, "work").launches
+  const chromeLaunch = launches.filter((item) => item.n === 2)[0]
+  same(chromeLaunch.exec, ["chromium", "--profile-directory=Profile 1", "--new-window"])
+  assert.strictEqual(chromeLaunch.w, 1280)
+  assert.strictEqual(chromeLaunch.floating, true)
+  const chromeRules = model.launchExecRules(chromeLaunch)
+  assert.ok(chromeRules.indexOf("float") >= 0)
+  assert.ok(chromeRules.indexOf("size 1280 800") >= 0)
+  assert.ok(chromeRules.indexOf("move 100 80") >= 0)
+  const termLaunch = launches.filter((item) => item.n === 3)[0]
+  assert.ok(termLaunch.exec.indexOf("nvim") >= 0)
+  const termRules = model.launchExecRules(termLaunch)
+  assert.ok(termRules.indexOf("float") === -1)
+  assert.ok(termRules.indexOf("workspace 3") >= 0)
+})
+
 console.log("ok")
 
 

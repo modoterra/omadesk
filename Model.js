@@ -356,9 +356,12 @@ function guessExec(win) {
   if (lower.indexOf("geforce") >= 0) return ["gtk-launch", "com.nvidia.geforcenow.desktop"]
   var pwa = chromePwaExec(cls)
   if (pwa && pwa.length) return pwa
-  // Two Chromiums after reboot are best-effort; --new-window is the hint we can give.
-  if (lower.indexOf("chromium") >= 0 || last === "chromium" || last === "chrome" || last === "google-chrome") {
-    return ["chromium", "--new-window"]
+  if (isChromiumClass(win)) {
+    var argv = ["chromium"]
+    var profile = chromiumProfile(win)
+    if (profile) argv.push("--profile-directory=" + profile)
+    argv.push("--new-window")
+    return argv
   }
   var known = knownDesktopExec(lower, last)
   if (known && known.length) return known
@@ -401,6 +404,55 @@ function knownDesktopExec(lower, last) {
   if (map[key]) return map[key]
   if (map[tail]) return map[tail]
   return null
+}
+
+function isChromiumClass(win) {
+  var cls = String((win && (win.class || win.initialClass)) || (typeof win === "string" ? win : "") || "").toLowerCase()
+  if (cls.indexOf("chrome-") === 0) return true
+  var last = lastClassSegment(cls)
+  return cls.indexOf("chromium") >= 0 || last === "chromium" || last === "chrome" || last === "google-chrome"
+}
+
+function profileFromArgv(argv) {
+  var list = isArray(argv) ? argv : []
+  var i
+  for (i = 0; i < list.length; i++) {
+    var a = String(list[i] || "")
+    if (a.indexOf("--profile-directory=") === 0) {
+      var v = a.replace("--profile-directory=", "").replace(/^\s+|\s+$/g, "")
+      return v
+    }
+    if (a === "--profile-directory" && list[i + 1])
+      return String(list[i + 1]).replace(/^\s+|\s+$/g, "")
+  }
+  return ""
+}
+
+function chromiumProfile(win) {
+  if (!win || typeof win === "string") return ""
+  if (win.profile) return String(win.profile)
+  var fromExec = profileFromArgv(win.exec)
+  if (fromExec) return fromExec
+  return profileFromArgv(win.cmd)
+}
+
+function launchExecRules(item) {
+  if (!item) return ""
+  var parts = []
+  var ws = item.workspace !== undefined && item.workspace !== null ? String(item.workspace) : ""
+  if (ws) parts.push("workspace " + ws + " silent")
+  var mon = safeMonitor(item.monitor)
+  if (mon) parts.push("monitor " + mon)
+  if (item.floating) parts.push("float")
+  var w = Number(item.w)
+  var h = Number(item.h)
+  if (item.floating && isFinite(w) && isFinite(h) && w >= 1 && h >= 1)
+    parts.push("size " + Math.round(w) + " " + Math.round(h))
+  var x = Number(item.x)
+  var y = Number(item.y)
+  if (item.floating && isFinite(x) && isFinite(y))
+    parts.push("move " + Math.round(x) + " " + Math.round(y))
+  return parts.join("; ")
 }
 
 function chromePwaExec(cls) {
@@ -774,6 +826,14 @@ function launchMissingPlan(desk, clientsJson, currentId) {
         title: String((rw && rw.title) || "")
       }
       if (mon) item.monitor = mon
+      if (rw && rw.floating) item.floating = true
+      var g = windowGeom(rw)
+      if (g) {
+        item.x = g.x
+        item.y = g.y
+        item.w = g.w
+        item.h = g.h
+      }
       launches.push(item)
     }
   }
@@ -1526,6 +1586,8 @@ function normalizeRecipeWindow(w) {
   if (cwd && !/[\n\r]/.test(cwd)) rec.cwd = cwd
   var cmd = safeArgv(src.cmd)
   if (cmd.length && !isShellBin(cmd[0])) rec.cmd = cmd
+  var profile = chromiumProfile(src)
+  if (profile) rec.profile = profile
   var icon = iconName(src)
   if (icon) rec.icon = icon
   return rec
@@ -1862,6 +1924,7 @@ function copyGeom(dst, src) {
   if (src.cwd) dst.cwd = String(src.cwd)
   var cmd = safeArgv(src.cmd)
   if (cmd.length) dst.cmd = cmd
+  if (src.profile) dst.profile = String(src.profile)
   return dst
 }
 
@@ -1901,6 +1964,11 @@ function applyTerminalHints(stage, hints) {
     var hint = byPid[Number(win.pid)]
     if (!hint) return
     if (hint.cwd) win.cwd = String(hint.cwd)
+    if (isChromiumClass(win)) {
+      var profile = hint.profile || profileFromArgv(hint.cmd)
+      if (profile) win.profile = profile
+      return
+    }
     if (isArray(hint.cmd) && hint.cmd.length) win.cmd = copyStrings(hint.cmd)
   }
   var wins = stage.windows || []
