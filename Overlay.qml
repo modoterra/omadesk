@@ -1751,6 +1751,28 @@ Item {
     }
   }
 
+  component KeyHint: Row {
+    property string chord: ""
+    property string label: ""
+    property bool sep: false
+
+    spacing: 0
+
+    Text {
+      text: chord
+      color: root.foreground
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+      font.bold: true
+    }
+    Text {
+      text: " " + label + (sep ? "  ·  " : "")
+      color: root.dim
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+    }
+  }
+
   component StatusPill: BorderSurface {
     id: pill
     property string label: ""
@@ -2554,6 +2576,79 @@ Item {
             foreground: root.foreground
             fontFamily: root.fontFamily
             onClicked: root.extrasPickingTheme = false
+          }
+        }
+
+        PanelSeparator {
+          visible: shortcutBar.visible
+          foreground: root.foreground
+        }
+
+        Item {
+          id: shortcutBar
+          width: parent.width
+          visible: root.showingPicker || root.mode === "save" || root.mode === "rename" || root.mode === "extras"
+          implicitHeight: Style.space(22)
+
+          Row {
+            visible: root.filterOpen
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            KeyHint { chord: "Esc"; label: "Leave Filter" }
+          }
+
+          Row {
+            visible: root.showingPicker && root.pickerEmpty && !root.filterOpen
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            KeyHint { chord: "N"; label: "Save Current" }
+          }
+
+          Row {
+            visible: root.showingPicker && root.pickerEmpty && !root.filterOpen
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            KeyHint { chord: "Esc"; label: "Close" }
+          }
+
+          Row {
+            visible: root.showingPicker && !root.pickerEmpty && !root.filterOpen
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            KeyHint { chord: "Enter"; label: "Switch"; sep: true }
+            KeyHint { chord: "S"; label: "Update Here"; sep: true }
+            KeyHint { chord: "N"; label: "New"; sep: true }
+            KeyHint { chord: "X"; label: "Close"; sep: true }
+            KeyHint { chord: "O"; label: "Open" }
+          }
+
+          Row {
+            visible: root.showingPicker && !root.pickerEmpty && !root.filterOpen
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            KeyHint { chord: "R"; label: "Rename"; sep: true }
+            KeyHint { chord: "Del"; label: "Forget" }
+          }
+
+          Row {
+            visible: root.mode === "save" || root.mode === "rename"
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            KeyHint { chord: "Enter"; label: root.mode === "rename" ? "Rename" : "Save" }
+          }
+
+          Row {
+            visible: root.mode === "save" || root.mode === "rename" || root.mode === "extras"
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            KeyHint { chord: "Esc"; label: root.mode === "extras" && root.extrasPickingTheme ? "Back" : "Cancel" }
+          }
+
+          Row {
+            visible: root.mode === "extras"
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            KeyHint { chord: "Enter"; label: root.extrasPickingTheme ? "Pick" : "Done" }
           }
         }
       }
