@@ -1294,7 +1294,7 @@ Item {
         root.pendingLaunches = []
         if (ok && typeof Model.launchMissingPlan === "function") {
           try {
-            var launches = Model.launchMissingPlan(desk, root.stage)
+            var launches = Model.launchMissingPlan(desk, root.stage, desk.id)
             if (launches && Array.isArray(launches.launches)) launches = launches.launches
             root.pendingLaunches = Array.isArray(launches) ? launches : []
           } catch (e) { root.pendingLaunches = [] }

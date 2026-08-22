@@ -1591,6 +1591,51 @@ test("54 park hides leftover lots of the outgoing desk, not call or unsaved", fu
   assert.ok(writingRestore.indexOf("0xhere01") === -1)
 })
 
+test("55 switch does not relaunch closed windows of a live desk", function() {
+  const desk = {
+    id: "writing",
+    extras: model.defaultExtras(),
+    workspaces: [
+      { n: 1, windows: [{ class: "dev.zed.Zed", exec: ["zed"] }] },
+      { n: 2, windows: [{ class: "com.mitchellh.ghostty", exec: ["ghostty"] }] },
+      { n: 3, windows: [{ class: "chromium", exec: ["chromium", "--new-window"] }] }
+    ]
+  }
+  const livePartial = {
+    windows: [
+      { address: "0xzed", workspace: 1, class: "dev.zed.Zed" },
+      { address: "0xghost", workspace: 2, class: "com.mitchellh.ghostty" }
+    ],
+    parked: [{ slug: "call", n: 1, address: "0xcall01", class: "chromium" }]
+  }
+  const twoArg = model.launchMissingPlan(desk, livePartial).launches
+  assert.strictEqual(twoArg.length, 1)
+  same(twoArg[0].exec, ["chromium", "--new-window"])
+  same(model.launchMissingPlan(desk, livePartial, "writing").launches, [])
+  const leakedLive = {
+    windows: [],
+    parked: [
+      { slug: "writing", n: 1, address: "0xzed", class: "dev.zed.Zed" },
+      { slug: "call", n: 1, address: "0xcall01", class: "chromium" }
+    ]
+  }
+  same(model.launchMissingPlan(desk, leakedLive, "writing").launches, [])
+  const dead = {
+    windows: [],
+    parked: [{ slug: "call", n: 1, address: "0xcall01", class: "chromium" }]
+  }
+  const fromDead = model.launchMissingPlan(desk, dead, "writing").launches
+  assert.strictEqual(fromDead.length, 3)
+  fromDead.forEach((item) => {
+    assert.ok(item.exec && item.exec.length)
+  })
+  const woke = model.wakePlan(desk, livePartial, "call")
+  assert.ok(woke.launches.length >= 1)
+  woke.launches.forEach((item) => {
+    assert.ok(String(item.workspace).indexOf("special:omadesk-writing-") === 0)
+  })
+})
+
 test("52 live tiles use n not id and skip empty workspaces", function() {
   const stage = model.parseStage(clientsText, workspacesText)
   const tiles = model.deskTiles(stage)

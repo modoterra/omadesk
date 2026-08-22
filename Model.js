@@ -728,11 +728,16 @@ function pickConnectedMonitor(mon, allow) {
   return mon
 }
 
-function launchMissingPlan(desk, clientsJson) {
+function launchMissingPlan(desk, clientsJson, currentId) {
   var extras = (desk && desk.extras) || defaultExtras()
   var empty = []
   empty.launches = []
   if (extras.launchMissing === false) return empty
+  // After switch restore, currentId is the incoming desk. Live rooms keep
+  // closed recipe windows closed; wake still calls this with two arguments.
+  if (currentId !== undefined && currentId !== null && currentId !== "") {
+    if (liveWindows(desk, clientsJson, currentId).length) return empty
+  }
   var clients = clientsForMatch(clientsJson, desk)
   var allow = null
   if (clientsJson && typeof clientsJson === "object" && !isArray(clientsJson) && isArray(clientsJson.monitors)) {
