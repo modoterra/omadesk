@@ -2122,7 +2122,7 @@ Item {
           }
 
           Button {
-            text: "Save Current as a Desk"
+            text: "Save Current Desk"
             bordered: true
             selected: true
             foreground: root.foreground
