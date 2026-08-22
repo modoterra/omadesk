@@ -2338,6 +2338,11 @@ Item {
             }
           }
 
+          PanelSeparator {
+            visible: root.mode === "save"
+            foreground: root.foreground
+          }
+
           Column {
             width: parent.width
             visible: root.mode === "save"
