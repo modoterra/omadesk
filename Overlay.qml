@@ -2594,61 +2594,61 @@ Item {
             visible: root.filterOpen
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
-            KeyHint { chord: "Esc"; label: "Leave Filter" }
+            KeyHint { chord: "esc"; label: "Leave Filter" }
           }
 
           Row {
             visible: root.showingPicker && root.pickerEmpty && !root.filterOpen
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
-            KeyHint { chord: "N"; label: "Save Current" }
+            KeyHint { chord: "n"; label: "Save Current" }
           }
 
           Row {
             visible: root.showingPicker && root.pickerEmpty && !root.filterOpen
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            KeyHint { chord: "Esc"; label: "Close" }
+            KeyHint { chord: "esc"; label: "Close" }
           }
 
           Row {
             visible: root.showingPicker && !root.pickerEmpty && !root.filterOpen
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
-            KeyHint { chord: "Enter"; label: "Switch"; sep: true }
-            KeyHint { chord: "S"; label: "Update Here"; sep: true }
-            KeyHint { chord: "N"; label: "New"; sep: true }
-            KeyHint { chord: "X"; label: "Close"; sep: true }
-            KeyHint { chord: "O"; label: "Open" }
+            KeyHint { chord: "enter"; label: "Switch"; sep: true }
+            KeyHint { chord: "s"; label: "Update Here"; sep: true }
+            KeyHint { chord: "n"; label: "New"; sep: true }
+            KeyHint { chord: "x"; label: "Close"; sep: true }
+            KeyHint { chord: "o"; label: "Open" }
           }
 
           Row {
             visible: root.showingPicker && !root.pickerEmpty && !root.filterOpen
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            KeyHint { chord: "R"; label: "Rename"; sep: true }
-            KeyHint { chord: "Del"; label: "Forget" }
+            KeyHint { chord: "r"; label: "Rename"; sep: true }
+            KeyHint { chord: "del"; label: "Forget" }
           }
 
           Row {
             visible: root.mode === "save" || root.mode === "rename"
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
-            KeyHint { chord: "Enter"; label: root.mode === "rename" ? "Rename" : "Save" }
+            KeyHint { chord: "enter"; label: root.mode === "rename" ? "Rename" : "Save" }
           }
 
           Row {
             visible: root.mode === "save" || root.mode === "rename" || root.mode === "extras"
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            KeyHint { chord: "Esc"; label: root.mode === "extras" && root.extrasPickingTheme ? "Back" : "Cancel" }
+            KeyHint { chord: "esc"; label: root.mode === "extras" && root.extrasPickingTheme ? "Back" : "Cancel" }
           }
 
           Row {
             visible: root.mode === "extras"
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
-            KeyHint { chord: "Enter"; label: root.extrasPickingTheme ? "Pick" : "Done" }
+            KeyHint { chord: "enter"; label: root.extrasPickingTheme ? "Pick" : "Done" }
           }
         }
       }
