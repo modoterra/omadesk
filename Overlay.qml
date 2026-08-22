@@ -281,11 +281,13 @@ Item {
   }
 
   readonly property string headerMetaText: {
-    if (root.filterOpen) return ""
+    // Keep a meta line even when the hint is hidden so the hero title
+    // does not jump when a dialog opens.
+    if (root.filterOpen) return "\u00a0"
     if (root.mode === "extras" && root.extrasPickingTheme) return "Pick a theme"
     if (root.mode === "extras") return "Desk extras"
     if (root.mode === "picker" && !root.pickerEmpty) return "Type / to filter"
-    return ""
+    return "\u00a0"
   }
 
   readonly property string forgetMessageText: {
