@@ -272,7 +272,7 @@ Item {
   }
 
   readonly property string headerTitleText: {
-    if (root.filterOpen) return root.filterText || "Search desks…"
+    if (root.filterOpen) return root.filterText || "Search Desks…"
     if (root.mode === "save") return "Save Current Desk"
     if (root.mode === "rename") return "Rename"
     if (root.mode === "extras" && root.extrasPickingTheme) return "Theme"
@@ -2058,7 +2058,6 @@ Item {
         spacing: Style.space(12)
 
         PanelHero {
-          visible: !root.filterOpen
           width: parent.width
           title: root.headerTitleText
           meta: root.headerMetaText
@@ -2073,17 +2072,6 @@ Item {
               font.pixelSize: Style.font.display
             }
           }
-        }
-
-        Text {
-          visible: root.filterOpen
-          width: parent.width
-          text: root.filterText || "Search desks…"
-          opacity: root.filterText ? 1 : 0.58
-          color: root.foreground
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.heading
-          elide: Text.ElideRight
         }
 
         Column {
