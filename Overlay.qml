@@ -25,6 +25,7 @@ Item {
   property var extrasDesk: null
   property var extrasDraft: ({ dnd: "leave", theme: "leave", launchMissing: true })
   property var forgetDesk: null
+  property var closeDesk: null
   property bool busy: false
   property bool desksDirReady: false
   property bool debugDemo: false
@@ -144,6 +145,7 @@ Item {
     root.targetDesk = null
     root.extrasDesk = null
     root.forgetDesk = null
+    root.closeDesk = null
     root.extrasPickingTheme = false
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
@@ -291,7 +293,12 @@ Item {
     return "Forget " + name + "? Parked windows return to 1–10. Nothing is killed."
   }
 
-  readonly property bool showingPicker: root.mode === "picker" || root.mode === "forget"
+  readonly property string closeMessageText: {
+    var name = (root.closeDesk && root.closeDesk.name) ? String(root.closeDesk.name) : "this desk"
+    return "Close every window in " + name + "? The recipe stays. Scratchpad is not touched."
+  }
+
+  readonly property bool showingPicker: root.mode === "picker" || root.mode === "forget" || root.mode === "close"
   readonly property int newDeskIndex: {
     var list = root.cards || []
     for (var i = 0; i < list.length; i++) {
@@ -701,6 +708,85 @@ Item {
     root.forgetDesk = desk
     if (confirmDialog) confirmDialog.selectedIndex = 0
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function openClose() {
+    if (root.busy) return
+    var card = root.highlightedCard()
+    if (!card || card.kind === "new") return
+    if (card.kind === "unsaved") {
+      root.closeDesk = { id: "unnamed", name: "Unsaved" }
+    } else {
+      var desk = root.highlightedDesk()
+      if (!desk) return
+      root.closeDesk = desk
+    }
+    if (card.kind !== "unsaved" && card.life === "dead") {
+      root.closeDesk = null
+      return
+    }
+    root.mode = "close"
+    if (confirmDialog) confirmDialog.selectedIndex = 0
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function confirmClose() {
+    var desk = root.closeDesk
+    if (!desk) { root.cancelDialog(); return }
+    if (root.busy) return
+    root.busy = true
+    root.refreshStage(function(ok) {
+      if (!ok) {
+        root.busy = false
+        return
+      }
+      var plan = null
+      if (typeof Model.closePlan === "function") {
+        try {
+          plan = Model.closePlan(desk, root.stage, root.desksState ? root.desksState.currentId : null)
+        } catch (e) { plan = null }
+      }
+      var batch = root.batchString(plan)
+      root.mode = "picker"
+      root.closeDesk = null
+      if (!batch) {
+        root.busy = false
+        Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+        return
+      }
+      root.pendingRestore = ""
+      root.startBatch(batch, "close")
+    })
+  }
+
+  function wakeHighlighted() {
+    if (root.busy) return
+    var card = root.highlightedCard()
+    if (!card || card.kind === "new" || card.kind === "unsaved") return
+    var desk = root.highlightedDesk()
+    if (!desk) return
+    root.busy = true
+    root.refreshStage(function(ok) {
+      if (!ok) {
+        root.busy = false
+        return
+      }
+      var launches = []
+      if (typeof Model.wakePlan === "function") {
+        try {
+          launches = Model.wakePlan(desk, root.stage, root.desksState ? root.desksState.currentId : null)
+          if (launches && Array.isArray(launches.launches)) launches = launches.launches
+        } catch (e) { launches = [] }
+      }
+      if (!Array.isArray(launches)) launches = []
+      for (var i = 0; i < launches.length; i++) root.launchOne(launches[i])
+      root.busy = false
+      Qt.callLater(function() {
+        root.refreshStage(function() {
+          Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+        })
+      })
+    })
   }
 
   function confirmSave() {
@@ -1498,6 +1584,12 @@ Item {
     } else if (!root.filterOpen && event.text === "e") {
       root.openExtras()
       event.accepted = true
+    } else if (!root.filterOpen && event.text === "x") {
+      root.openClose()
+      event.accepted = true
+    } else if (!root.filterOpen && event.text === "o") {
+      root.wakeHighlighted()
+      event.accepted = true
     }
   }
 
@@ -1978,7 +2070,7 @@ Item {
             }
             return
           }
-          if (root.mode === "forget") {
+          if (root.mode === "forget" || root.mode === "close") {
             root.handleConfirmKey(event)
             return
           }
@@ -2537,7 +2629,9 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             KeyHint { chord: "enter"; label: "Switch"; sep: true }
             KeyHint { chord: "s"; label: "Update Here"; sep: true }
-            KeyHint { chord: "n"; label: "New" }
+            KeyHint { chord: "n"; label: "New"; sep: true }
+            KeyHint { chord: "x"; label: "Close"; sep: true }
+            KeyHint { chord: "o"; label: "Open" }
           }
 
           Row {
@@ -2574,11 +2668,11 @@ Item {
       ConfirmDialog {
         id: confirmDialog
         anchors.fill: parent
-        opened: root.mode === "forget"
+        opened: root.mode === "forget" || root.mode === "close"
         z: 10
-        message: root.forgetMessageText
+        message: root.mode === "forget" ? root.forgetMessageText : root.closeMessageText
         cancelText: "Cancel"
-        confirmText: "Forget"
+        confirmText: root.mode === "forget" ? "Forget" : "Close"
         background: root.background
         foreground: root.foreground
         scrim: root.scrim
@@ -2587,7 +2681,10 @@ Item {
         fontFamily: root.fontFamily
         cornerRadius: root.cornerRadius
         onCanceled: root.cancelDialog()
-        onConfirmed: root.confirmForget()
+        onConfirmed: {
+          if (root.mode === "forget") root.confirmForget()
+          else root.confirmClose()
+        }
       }
     }
   }
