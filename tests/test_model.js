@@ -1448,6 +1448,30 @@ test("48 terminal exec keeps cwd and a non-shell command", function() {
   assert.ok(launched[0].exec.indexOf("htop") >= 0)
 })
 
+test("58 idle terminal still stores cwd and relaunches there", function() {
+  const stage = {
+    windows: [
+      { pid: 9, class: "com.mitchellh.ghostty", workspace: 1, address: "0xterm" }
+    ],
+    workspaces: [{
+      n: 1,
+      windows: [{ pid: 9, class: "com.mitchellh.ghostty", workspace: 1, address: "0xterm" }]
+    }]
+  }
+  model.applyTerminalHints(stage, [{ pid: 9, cwd: "/home/hallas/Work/omadesk" }])
+  assert.strictEqual(stage.windows[0].cwd, "/home/hallas/Work/omadesk")
+  const recipe = model.snapshotRecipe(stage, "Term", model.defaultExtras(), 1, "2026-08-22T12:00:00Z")
+  const win = recipe.workspaces[0].windows[0]
+  assert.strictEqual(win.cwd, "/home/hallas/Work/omadesk")
+  assert.ok(!win.cmd)
+  const launched = model.launchMissingPlan({
+    extras: model.defaultExtras(),
+    workspaces: recipe.workspaces
+  }, "[]").launches
+  assert.strictEqual(launched.length, 1)
+  same(launched[0].exec, ["ghostty", "--working-directory=/home/hallas/Work/omadesk"])
+})
+
 test("50 minimap aspect matches the monitor", function() {
   const monitors = [
     { name: "DP-1", width: 2560, height: 1440, disabled: false, focused: true, activeWorkspace: { id: 1, name: "1" } },
