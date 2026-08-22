@@ -1636,6 +1636,58 @@ test("55 switch does not relaunch closed windows of a live desk", function() {
   })
 })
 
+test("56 unnamed currentId and unnamed desk id are the unsaved room", function() {
+  const writing = { id: "writing", name: "Writing", extras: model.defaultExtras(), workspaces: [] }
+  const unnamedDesk = {
+    id: "unnamed",
+    name: "Unnamed",
+    extras: model.defaultExtras(),
+    workspaces: [{ n: 1, windows: [{ class: "foot", exec: ["foot"] }] }]
+  }
+  const state = { version: 1, currentId: "unnamed", desks: [writing, unnamedDesk] }
+  const stage = {
+    windows: [{ address: "0xhere01", workspace: 1, class: "mpv" }],
+    parked: [
+      { slug: "unnamed", n: 2, address: "0xunsaved01", class: "foot" },
+      { slug: "writing", n: 1, address: "0xwriting01", class: "dev.zed.Zed" }
+    ]
+  }
+  const unsaved = model.unsavedCard(state, stage)
+  assert.ok(unsaved)
+  assert.strictEqual(unsaved.here, true)
+  const cards = model.pickerCards(state, "", stage)
+  assert.strictEqual(cards.filter((c) => c.kind === "unsaved")[0].here, true)
+  assert.strictEqual(cards.filter((c) => c.kind === "desk" && c.id === "unnamed").length, 0)
+  assert.strictEqual(cards.filter((c) => c.kind === "desk" && c.id === "writing")[0].here, false)
+  assert.strictEqual(model.isCurrentDesk(unnamedDesk, "unnamed"), false)
+  assert.strictEqual(model.isCurrentDesk(writing, "unnamed"), false)
+  assert.strictEqual(model.targetedNamedDesk({ kind: "desk", id: "unnamed", desk: unnamedDesk }, state), null)
+  const closeUnsaved = model.closePlan({ id: "unnamed", name: "Unsaved" }, stage, "unnamed")
+  const closeBlob = closeUnsaved.dispatches.join(" ")
+  assert.ok(closeBlob.indexOf("0xhere01") >= 0)
+  assert.ok(closeBlob.indexOf("0xunsaved01") >= 0)
+  assert.ok(closeBlob.indexOf("0xwriting01") === -1)
+  const closeWriting = model.closePlan(writing, stage, "unnamed")
+  const writingClose = closeWriting.dispatches.join(" ")
+  assert.ok(writingClose.indexOf("0xwriting01") >= 0)
+  assert.ok(writingClose.indexOf("0xhere01") === -1)
+  assert.ok(writingClose.indexOf("0xunsaved01") === -1)
+  const switched = model.parkPlan(stage, model.currentSlug(state), "writing", writing)
+  const parkBlob = switched.park.dispatches.join(" ")
+  assert.ok(parkBlob.indexOf("0xhere01") >= 0)
+  assert.ok(parkBlob.indexOf("special:omadesk-unnamed-") >= 0)
+  assert.ok(parkBlob.indexOf("0xwriting01") === -1)
+  const restoreBlob = switched.restore.dispatches.join(" ")
+  assert.ok(restoreBlob.indexOf("0xwriting01") >= 0)
+  assert.ok(restoreBlob.indexOf("0xunsaved01") === -1)
+  assert.ok(restoreBlob.indexOf("0xhere01") === -1)
+  const read = model.readDesks(JSON.stringify(state))
+  assert.strictEqual(read.ok, true)
+  assert.strictEqual(read.state.currentId, null)
+  const used = model.useDesk(model.demoDesks(), "unnamed")
+  assert.strictEqual(used.currentId, null)
+})
+
 test("52 live tiles use n not id and skip empty workspaces", function() {
   const stage = model.parseStage(clientsText, workspacesText)
   const tiles = model.deskTiles(stage)

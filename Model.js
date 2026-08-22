@@ -666,6 +666,7 @@ function useDesk(state, deskId, nowMs) {
   var next = normalizeState(state)
   var now = parseNow(nowMs)
   var to = deskId == null || deskId === "" ? null : String(deskId)
+  if (to && sanitizeSlug(to) === "unnamed") to = null
   if (next.currentId && to && String(next.currentId) !== to) {
     stampLastUsed(next, next.currentId, now)
   }
@@ -841,6 +842,7 @@ function targetedNamedDesk(card, state) {
   if (!card || card.kind !== "desk") return null
   var id = card.id
   if (id == null || id === "") return null
+  if (sanitizeSlug(id) === "unnamed") return null
   if (state && isArray(state.desks)) {
     var i
     for (i = 0; i < state.desks.length; i++) {
@@ -907,7 +909,8 @@ function pickerCards(state, query, stage, nowMs) {
   if (unsaved) cards.push(unsaved)
   for (i = 0; i < desks.length; i++) {
     var desk = desks[i]
-    var here = st.currentId != null && desk.id === st.currentId
+    if (isUnsavedDesk(desk)) continue
+    var here = isCurrentDesk(desk, st.currentId)
     var life = deskLife(desk, stage, st.currentId)
     cards.push({
       kind: "desk",
@@ -966,7 +969,7 @@ function parkedToStage(parked) {
 }
 
 function unsavedCard(state, stage) {
-  var here = !state || state.currentId == null || state.currentId === ""
+  var here = !state || isUnsavedCurrent(state.currentId)
   var parked = unnamedParkedWindows(stage)
   if (!here && !parked.length) return null
   // +new parks the untitled room then leaves currentId null; 1-10 is empty
@@ -1442,6 +1445,7 @@ function normalizeState(state) {
     if (desk) desks.push(desk)
   }
   var currentId = src.currentId == null || src.currentId === "" ? null : String(src.currentId)
+  if (currentId && sanitizeSlug(currentId) === "unnamed") currentId = null
   return { version: 1, currentId: currentId, desks: desks }
 }
 
@@ -1923,8 +1927,17 @@ function parkedForSlug(stage, slug) {
   return out
 }
 
+function isUnsavedCurrent(currentId) {
+  return currentId == null || currentId === "" || sanitizeSlug(currentId) === "unnamed"
+}
+
+function isUnsavedDesk(desk) {
+  return !desk || sanitizeSlug(desk.id) === "unnamed"
+}
+
 function isCurrentDesk(desk, currentId) {
-  return !!(desk && currentId != null && currentId !== "" && String(desk.id) === String(currentId))
+  if (isUnsavedCurrent(currentId) || isUnsavedDesk(desk)) return false
+  return !!(desk && String(desk.id) === String(currentId))
 }
 
 function liveWindows(desk, stage, currentId) {
@@ -1935,7 +1948,7 @@ function liveWindows(desk, stage, currentId) {
     if (!hereNamed.length) return leaked
     return hereNamed.concat(leaked)
   }
-  if ((currentId == null || currentId === "") && (!desk || sanitizeSlug(desk.id) === "unnamed")) {
+  if (isUnsavedCurrent(currentId) && isUnsavedDesk(desk)) {
     var here = stageWindows(stage)
     var parked = parkedForSlug(stage, "unnamed")
     if (!parked.length) return here

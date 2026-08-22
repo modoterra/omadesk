@@ -1126,6 +1126,14 @@ Item {
 
   function switchTo(desk, workspaceN) {
     if (!desk || desk.kind === "new" || root.busy) return
+    if (typeof Model.sanitizeSlug === "function") {
+      try {
+        if (Model.sanitizeSlug(desk.id) === "unnamed") {
+          root.switchToUnsaved(workspaceN)
+          return
+        }
+      } catch (e) {}
+    }
     var clicked = root.clickedWorkspaceN(workspaceN)
     root.pendingFocusN = clicked
     if (root.desksState && String(root.desksState.currentId) === String(desk.id)) {
