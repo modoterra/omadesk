@@ -2307,7 +2307,7 @@ Item {
         Column {
           width: parent.width
           visible: root.mode === "save" || root.mode === "rename"
-          spacing: Style.space(14)
+          spacing: Style.space(12)
 
           Column {
             width: parent.width
