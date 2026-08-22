@@ -274,7 +274,7 @@ Item {
   readonly property string headerTitleText: {
     if (root.filterOpen) return root.filterText || "Search Desks…"
     if (root.mode === "save") return "Save Current Desk"
-    if (root.mode === "rename") return "Rename"
+    if (root.mode === "rename") return "Rename Desk"
     if (root.mode === "extras" && root.extrasPickingTheme) return "Theme"
     if (root.mode === "extras" && root.extrasDesk) return String(root.extrasDesk.name || "Extras")
     return "Desks"
