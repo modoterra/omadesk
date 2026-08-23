@@ -2051,6 +2051,31 @@ test("65 extras theme applies now only on the current desk", function() {
   assert.strictEqual(model.extrasThemeNow(writing, extras, "unnamed"), null)
 })
 
+test("66 updateDesk keeps monitor sizes from the stage", function() {
+  const monitors = [
+    { name: "DP-1", width: 2560, height: 1440, disabled: false, focused: true, activeWorkspace: { id: 1, name: "1" } }
+  ]
+  const stage = model.parseStage(clientsText, workspacesText, JSON.stringify(monitors))
+  const recipe = model.snapshotRecipe(stage, "Wide", model.defaultExtras(), 3, "2026-08-21T12:00:00Z")
+  assert.strictEqual(recipe.monitorSizes["DP-1"].w, 2560)
+  assert.strictEqual(recipe.monitorSizes["DP-1"].h, 1440)
+  const saved = model.saveDesk(model.emptyState(), recipe)
+  const id = saved.desks[0].id
+  const updated = model.updateDesk(saved, id, stage, "2026-08-22T12:00:00Z")
+  const desk = updated.desks.filter((d) => d.id === id)[0]
+  assert.ok(desk.monitorSizes)
+  assert.strictEqual(desk.monitorSizes["DP-1"].w, 2560)
+  assert.strictEqual(desk.monitorSizes["DP-1"].h, 1440)
+  const noMons = model.updateDesk(saved, id, model.parseStage(clientsText, workspacesText), "2026-08-22T12:01:00Z")
+  const kept = noMons.desks.filter((d) => d.id === id)[0]
+  assert.strictEqual(kept.monitorSizes["DP-1"].w, 2560)
+  const ultrawide = model.parseStage(clientsText, workspacesText, JSON.stringify([
+    { name: "DP-1", width: 3440, height: 1440, disabled: false, focused: true, activeWorkspace: { id: 1, name: "1" } }
+  ]))
+  const resized = model.updateDesk(saved, id, ultrawide, "2026-08-22T13:00:00Z")
+  assert.strictEqual(resized.desks.filter((d) => d.id === id)[0].monitorSizes["DP-1"].w, 3440)
+})
+
 console.log("ok")
 
 

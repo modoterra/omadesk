@@ -970,6 +970,9 @@ function updateDesk(state, deskId, stage, nowIso) {
     }
     var layout = snapshotLayout(source, workspaces)
     if (layout.length) updated.layout = layout
+    var sizes = normalizeMonitorSizes(source && source.monitorSizes)
+    if (!sizes) sizes = normalizeMonitorSizes(prev.monitorSizes)
+    if (sizes) updated.monitorSizes = sizes
     next.desks[i] = updated
     break
   }
