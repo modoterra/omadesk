@@ -51,6 +51,9 @@ Put the chip next to the stock workspace numbers:
 omarchy bar move com.mdtrr.omadesk --section left
 ```
 
+The chip reads `/ Name` on a named desk, `Unsaved` when saved desks exist
+but you are on the draft room, and `Desks` when nothing is saved yet.
+
 ## Summon
 
 ```sh
@@ -93,13 +96,14 @@ omarchy plugin remove com.mdtrr.omadesk
 ```
 
 Recipes live in `~/.config/omarchy/omadesk/desks.json`. Forget deletes the
-recipe and brings that desk's parked windows back onto 1–10. A **live** desk
-still has windows (on 1–10 or parked). A **dead** desk is recipe only: `x`
-closes its windows, `o` launches them in the background without switching,
-and switching into it after a reboot also launches the saved windows if
-Launch Missing is on.
-Theme extras can leave the current theme or run `omarchy theme set` when you
-switch into that desk.
+recipe and brings that desk's parked windows back onto 1–10. The picker
+marks **LIVE** when windows are still open (on 1–10 or parked), **DND**
+when that desk turns do-not-disturb on, and **DRAFT** on the Unsaved card.
+A **dead** desk is recipe only: `x` closes its windows, `o` launches them
+in the background without switching, and switching into it after a reboot
+also launches the saved windows if Launch Missing is on. Theme extras can
+leave the current theme or run `omarchy theme set` when you switch into
+that desk.
 
 ## Tests
 
@@ -118,7 +122,9 @@ npm --prefix www run build
 
 ## Site (`www/`)
 
-Unused. Intended Cloudflare Pages settings if it is wired later:
+Unused. The landing shows the same overlay shot as this README: keep
+`preview.png` at the repo root and copy it to `www/public/preview.png`.
+Intended Cloudflare Pages settings if it is wired later:
 
 | Setting | Value |
 | --- | --- |
@@ -131,8 +137,9 @@ Unused. Intended Cloudflare Pages settings if it is wired later:
 ## Security
 
 Plugins run unsandboxed inside the long-lived Omarchy shell process, with
-your user permissions. Review the code before you enable it. Hyprctl is
-the only command used to move windows; apps are launched with `uwsm-app`.
+your user permissions. Review the code before you enable it. Hyprctl moves
+windows and sets workspace layout. Apps launch with `uwsm-app`. Desk extras
+can run `omarchy-shell notifications setDnd` and `omarchy theme set`.
 
 ## Community
 
