@@ -98,8 +98,9 @@ still has windows (on 1–10 or parked). A **dead** desk is recipe only: `x`
 closes its windows, `o` launches them in the background without switching,
 and switching into it after a reboot also launches the saved windows if
 Launch Missing is on.
-Theme extras can leave the current theme or run `omarchy theme set` when you
-switch into that desk.
+Theme extras can leave the current theme or run `omarchy theme set`. On the
+desk you are on, that set runs as soon as you pick it. On another desk it
+runs when you switch in.
 
 ## Tests
 

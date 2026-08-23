@@ -1028,6 +1028,11 @@ function themeAction(extras) {
   return theme
 }
 
+function extrasThemeNow(desk, extras, currentId) {
+  if (!isCurrentDesk(desk, currentId)) return null
+  return themeAction(extras)
+}
+
 function parseThemeList(text) {
   var raw = String(text || "").split(/\r?\n/)
   var out = []

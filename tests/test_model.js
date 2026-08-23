@@ -2031,6 +2031,17 @@ test("64 picker here is only the current desk; parked windows still count as liv
   assert.strictEqual(testCard.life, "live")
 })
 
+test("65 extras theme applies now only on the current desk", function() {
+  const writing = { id: "writing", name: "Writing" }
+  const call = { id: "call", name: "Call" }
+  const extras = { theme: "Dazzle Dusk" }
+  assert.strictEqual(model.extrasThemeNow(writing, extras, "writing"), "Dazzle Dusk")
+  assert.strictEqual(model.extrasThemeNow(call, extras, "writing"), null)
+  assert.strictEqual(model.extrasThemeNow(writing, { theme: "leave" }, "writing"), null)
+  assert.strictEqual(model.extrasThemeNow(writing, extras, null), null)
+  assert.strictEqual(model.extrasThemeNow(writing, extras, "unnamed"), null)
+})
+
 console.log("ok")
 
 
