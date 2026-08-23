@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
@@ -2381,13 +2382,14 @@ Item {
           }
         }
 
-        Grid {
+        GridLayout {
           id: deskGrid
           width: parent.width
           visible: root.showingPicker && !root.pickerEmpty
           columns: 2
           columnSpacing: root.gridGap
           rowSpacing: root.gridGap
+          uniformCellSizes: true
 
           Repeater {
             model: deskGrid.visible ? root.gridCards : []
@@ -2401,7 +2403,11 @@ Item {
               readonly property bool hasCursor: cardIndex === root.cursorIndex
               readonly property bool isHere: !!card.here
 
-              width: root.cellWidth
+              Layout.fillWidth: true
+              Layout.fillHeight: true
+              Layout.preferredWidth: root.cellWidth
+              Layout.preferredHeight: deskBody.implicitHeight + Style.space(24)
+              Layout.minimumHeight: deskBody.implicitHeight + Style.space(24)
               implicitHeight: deskBody.implicitHeight + Style.space(24)
               color: root.cardFill(hasCursor, isHere)
               borderSpec: root.cardBorderSpec(hasCursor, isHere)
@@ -2458,17 +2464,20 @@ Item {
                   }
                 }
 
-                Grid {
+                GridLayout {
                   width: parent.width
                   columns: root.tileColumns
                   columnSpacing: Style.space(6)
                   rowSpacing: Style.space(6)
+                  uniformCellSizes: true
 
                   Repeater {
                     model: card.tiles || []
                     delegate: WorkspaceTile {
-                      width: Math.floor((parent.width - Style.space(6) * (root.tileColumns - 1)) / root.tileColumns)
-                      height: implicitHeight
+                      Layout.fillWidth: true
+                      Layout.fillHeight: true
+                      Layout.preferredHeight: implicitHeight
+                      Layout.minimumHeight: implicitHeight
                       tileData: modelData
                       clickable: true
                       deskSlug: isUnsaved ? "unnamed" : String(card.id || "")
@@ -2566,17 +2575,20 @@ Item {
               fontFamily: root.fontFamily
             }
 
-            Grid {
+            GridLayout {
               width: parent.width
               columns: root.tileColumns
               columnSpacing: Style.space(6)
               rowSpacing: Style.space(6)
+              uniformCellSizes: true
 
               Repeater {
                 model: root.mode === "save" ? root.tilesFrom(root.stage, 10) : []
                 delegate: WorkspaceTile {
-                  width: Math.floor((parent.width - Style.space(6) * (root.tileColumns - 1)) / root.tileColumns)
-                  height: implicitHeight
+                  Layout.fillWidth: true
+                  Layout.fillHeight: true
+                  Layout.preferredHeight: implicitHeight
+                  Layout.minimumHeight: implicitHeight
                   tileData: modelData
                   onLayoutChosen: function(layout) { root.setWorkspaceLayout(modelData, layout) }
                 }
