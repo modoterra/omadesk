@@ -2079,6 +2079,72 @@ test("66 updateDesk keeps monitor sizes from the stage", function() {
   assert.strictEqual(resized.desks.filter((d) => d.id === id)[0].monitorSizes["DP-1"].w, 3440)
 })
 
+test("67 moveWorkspace across desks keeps windows on the moved workspace", function() {
+  const before = model.demoDesks()
+  const writingBefore = before.desks.filter((d) => d.id === "writing")[0]
+  const zed = writingBefore.workspaces.filter((w) => w.n === 1)[0]
+  assert.ok(zed)
+  assert.strictEqual(zed.windows[0].class, "dev.zed.Zed")
+  const after = model.moveWorkspace(before, "writing", 1, "call")
+  const writing = after.desks.filter((d) => d.id === "writing")[0]
+  const call = after.desks.filter((d) => d.id === "call")[0]
+  assert.strictEqual(writing.workspaces.filter((w) => w.n === 1).length, 0)
+  assert.ok(writing.workspaces.filter((w) => w.n === 2).length)
+  const moved = call.workspaces.filter((w) => (w.windows || []).some((win) => win.class === "dev.zed.Zed"))[0]
+  assert.ok(moved)
+  assert.strictEqual(moved.windows[0].title, "charcana")
+  assert.strictEqual(call.workspaces.filter((w) => w.n === 1).length, 1)
+  assert.ok(moved.n >= 1 && moved.n <= 10)
+  assert.ok(moved.n !== 1)
+  assert.strictEqual(moved.windows[0].class, zed.windows[0].class)
+  assert.strictEqual(moved.windows[0].title, zed.windows[0].title)
+  assert.strictEqual(before.desks.filter((d) => d.id === "writing")[0].workspaces.filter((w) => w.n === 1).length, 1)
+})
+
+test("68 moveWorkspace reorders workspaces on the same desk", function() {
+  const before = model.demoDesks()
+  const writingBefore = before.desks.filter((d) => d.id === "writing")[0]
+  same(writingBefore.workspaces.map((w) => w.n), [1, 2, 3])
+  const after = model.moveWorkspace(before, "writing", 3, "writing", 0)
+  const writing = after.desks.filter((d) => d.id === "writing")[0]
+  same(writing.workspaces.map((w) => w.n), [3, 1, 2])
+  assert.strictEqual(writing.workspaces[0].windows[0].class, writingBefore.workspaces[2].windows[0].class)
+  assert.strictEqual(writing.workspaces[0].windows[0].title, writingBefore.workspaces[2].windows[0].title)
+  const tiles = model.deskTiles(writing)
+  same(tiles.map((t) => t.n), [3, 1, 2])
+})
+
+test("69 moveWorkspace refuses a full destination instead of dropping windows", function() {
+  const state = {
+    version: 1,
+    currentId: "src",
+    desks: [
+      {
+        id: "src",
+        name: "Src",
+        extras: model.defaultExtras(),
+        workspaces: [{ n: 1, windows: [{ class: "mpv", title: "clip" }] }]
+      },
+      {
+        id: "full",
+        name: "Full",
+        extras: model.defaultExtras(),
+        workspaces: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => ({
+          n: n,
+          windows: [{ class: "foot", title: "t" + n }]
+        }))
+      }
+    ]
+  }
+  const after = model.moveWorkspace(state, "src", 1, "full")
+  const src = after.desks.filter((d) => d.id === "src")[0]
+  const full = after.desks.filter((d) => d.id === "full")[0]
+  assert.strictEqual(src.workspaces.length, 1)
+  assert.strictEqual(src.workspaces[0].windows[0].class, "mpv")
+  assert.strictEqual(full.workspaces.length, 10)
+  assert.strictEqual(full.workspaces.filter((w) => (w.windows || []).some((win) => win.class === "mpv")).length, 0)
+})
+
 console.log("ok")
 
 

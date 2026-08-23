@@ -1002,6 +1002,97 @@ function forgetDesk(state, deskId) {
   return next
 }
 
+function cloneJson(value) {
+  if (value == null) return value
+  return JSON.parse(JSON.stringify(value))
+}
+
+function clampIndex(index, length) {
+  if (index == null || index === "" || !isFinite(Number(index))) return length
+  var n = Number(index)
+  if (n < 0) return 0
+  if (n > length) return length
+  return n
+}
+
+function workspaceIndexByN(list, n) {
+  var want = Number(n)
+  if (!(want >= 1 && want <= 10) || !isArray(list)) return -1
+  var i
+  for (i = 0; i < list.length; i++) {
+    if (Number(list[i] && list[i].n) === want) return i
+  }
+  return -1
+}
+
+function freeWorkspaceN(list) {
+  var taken = {}
+  var i
+  var n
+  if (isArray(list)) {
+    for (i = 0; i < list.length; i++) {
+      n = Number(list[i] && list[i].n)
+      if (n >= 1 && n <= 10) taken[n] = true
+    }
+  }
+  for (n = 1; n <= 10; n++) {
+    if (!taken[n]) return n
+  }
+  return 0
+}
+
+function deskById(state, deskId) {
+  if (!state || !isArray(state.desks) || deskId == null || deskId === "") return null
+  var i
+  for (i = 0; i < state.desks.length; i++) {
+    if (String(state.desks[i].id) === String(deskId)) return state.desks[i]
+  }
+  return null
+}
+
+function moveWorkspace(state, fromDeskId, workspaceN, toDeskId, toIndex) {
+  var next = normalizeState(state)
+  var fromN = Number(workspaceN)
+  if (!(fromN >= 1 && fromN <= 10)) return next
+  var fromDesk = deskById(next, fromDeskId)
+  var toDesk = deskById(next, toDeskId)
+  if (!fromDesk || !toDesk) return next
+  var srcIndex = workspaceIndexByN(fromDesk.workspaces, fromN)
+  if (srcIndex < 0) return next
+  var ws = cloneJson(fromDesk.workspaces[srcIndex])
+  if (!ws) return next
+
+  if (String(fromDeskId) === String(toDeskId)) {
+    var same = fromDesk.workspaces.slice()
+    same.splice(srcIndex, 1)
+    same.splice(clampIndex(toIndex, same.length), 0, ws)
+    fromDesk.workspaces = same
+    return next
+  }
+
+  var dest = toDesk.workspaces.slice()
+  var takenN = Number(ws.n)
+  var i
+  var collision = false
+  for (i = 0; i < dest.length; i++) {
+    if (Number(dest[i] && dest[i].n) === takenN) {
+      collision = true
+      break
+    }
+  }
+  if (collision) {
+    var free = freeWorkspaceN(dest)
+    if (!free) return normalizeState(state)
+    ws.n = free
+  }
+  var fromList = fromDesk.workspaces.slice()
+  fromList.splice(srcIndex, 1)
+  fromDesk.workspaces = fromList
+  dest.splice(clampIndex(toIndex, dest.length), 0, ws)
+  toDesk.workspaces = dest
+  return next
+}
+
 function forgetRestorePlan(clientsJson, desk) {
   var slug = desk && typeof desk === "object" ? (desk.id || desk.name) : desk
   // Forgetting unparks onto 1-10 only. Layout moves belong to switching in.
@@ -1656,7 +1747,6 @@ function normalizeDesk(desk) {
     if (mon) rec.monitor = mon
     workspaces.push(rec)
   }
-  workspaces.sort(function(a, b) { return a.n - b.n })
   var last = desk.lastWorkspace
   if ((last == null || last === "") && desk.recipe && desk.recipe.lastWorkspace != null) {
     last = desk.recipe.lastWorkspace
@@ -1881,7 +1971,20 @@ function deskTiles(desk, limit, includeNextEmpty) {
   }
   var sizes = (desk && desk.monitorSizes) || {}
   var tiles = []
-  for (n = 1; n <= cap; n++) {
+  var order = []
+  if (list.length) {
+    for (i = 0; i < list.length; i++) {
+      n = workspaceTileN(list[i], cap)
+      if (n) order.push(n)
+    }
+  } else {
+    for (n = 1; n <= cap; n++) order.push(n)
+  }
+  var seen = {}
+  for (i = 0; i < order.length; i++) {
+    n = order[i]
+    if (seen[n]) continue
+    seen[n] = true
     var wins = byN[n] && isArray(byN[n].windows) ? byN[n].windows : []
     if (!wins.length) continue
     var label = tileLabel(byN[n])

@@ -1012,6 +1012,18 @@ Item {
     movePaneProc.running = true
   }
 
+  function applyWorkspaceMove(fromDeskId, fromN, toDeskId, toIndex) {
+    if (typeof Model.moveWorkspace !== "function") return
+    var next = null
+    try {
+      next = Model.moveWorkspace(root.desksState, fromDeskId, fromN, toDeskId, toIndex)
+    } catch (e) {
+      next = null
+    }
+    if (!next) return
+    root.assignState(next)
+  }
+
   function focusWorkspaceNow(n) {
     if (n == null || n === "") return
     var lua = root.focusDispatch(String(n))
@@ -1824,13 +1836,19 @@ Item {
     signal activated()
     signal layoutChosen(string layout)
     signal paneDropped(string address, var fromN)
+    signal workspaceDropped(string fromDeskId, var fromN)
 
     property string deskSlug: ""
     property bool deskHere: false
     property bool panesDraggable: false
+    property bool workspacesDraggable: false
     property bool paneDragging: false
+    property bool workspaceDragging: false
     property string layoutOverride: ""
     readonly property string paneDragKey: tile.deskSlug ? "omadesk-pane-" + tile.deskSlug : ""
+    readonly property string workspaceDragKey: "omadesk-ws"
+    readonly property string fromDeskId: tile.deskSlug
+    readonly property var fromWorkspaceN: tile.tileData ? tile.tileData.n : null
 
     readonly property bool canToggleLayout: {
       if (!tile.tileData) return false
@@ -1889,9 +1907,49 @@ Item {
     }
     implicitHeight: tile.chromePad * 2 + tile.headerHeight + tile.chromeGap + tile.mapHeight + (tile.hasUnder ? tile.underStrip : 0)
     implicitWidth: Style.space(96)
-    clip: !tile.paneDragging
+    clip: !tile.paneDragging && !tile.workspaceDragging
+    z: tile.workspaceDragging ? 40 : 0
+    Drag.active: wsHandle.drag.active && tile.workspacesDraggable
+    Drag.hotSpot.x: width / 2
+    Drag.hotSpot.y: height / 2
+    Drag.keys: tile.workspacesDraggable ? [tile.workspaceDragKey] : []
+    Drag.source: tile
+    Drag.proposedAction: Qt.MoveAction
 
     onTileDataChanged: tile.layoutOverride = ""
+
+    DropArea {
+      id: wsDrop
+      anchors.fill: parent
+      keys: tile.workspacesDraggable ? [tile.workspaceDragKey] : []
+      onEntered: function(drag) {
+        var src = drag.source
+        if (!src || String(src.fromDeskId) === "" || src.fromWorkspaceN == null) {
+          drag.accepted = false
+          return
+        }
+        if (String(src.fromDeskId) === String(tile.fromDeskId) && Number(src.fromWorkspaceN) === Number(tile.fromWorkspaceN))
+          drag.accepted = false
+      }
+      onDropped: function(drop) {
+        var src = drop.source
+        var fromDesk = src && src.fromDeskId ? String(src.fromDeskId) : ""
+        var fromN = src ? src.fromWorkspaceN : null
+        if (fromDesk && fromN != null)
+          tile.workspaceDropped(fromDesk, fromN)
+        drop.acceptProposedAction()
+      }
+
+      Rectangle {
+        anchors.fill: parent
+        visible: wsDrop.containsDrag
+        z: 8
+        color: "transparent"
+        border.width: Style.normalBorderWidth + 1
+        border.color: root.accent
+        radius: Style.cornerRadius
+      }
+    }
 
     Column {
       anchors.left: parent.left
@@ -1905,13 +1963,29 @@ Item {
         height: tile.headerHeight
 
         MouseArea {
+          id: wsHandle
           anchors.fill: parent
           anchors.rightMargin: tile.canToggleLayout ? layoutBtn.width + Style.space(4) : 0
           z: 1
-          enabled: tile.clickable
-          hoverEnabled: tile.clickable
-          cursorShape: tile.clickable ? Qt.PointingHandCursor : Qt.ArrowCursor
-          onClicked: tile.activated()
+          enabled: tile.clickable || tile.workspacesDraggable
+          hoverEnabled: tile.clickable || tile.workspacesDraggable
+          cursorShape: tile.workspacesDraggable ? Qt.OpenHandCursor : (tile.clickable ? Qt.PointingHandCursor : Qt.ArrowCursor)
+          preventStealing: tile.workspacesDraggable
+          drag.target: tile.workspacesDraggable ? tile : undefined
+          drag.threshold: 10
+          onPressed: if (tile.workspacesDraggable) tile.workspaceDragging = true
+          onReleased: {
+            if (tile.Drag.active)
+              tile.Drag.drop()
+            else if (tile.clickable)
+              tile.activated()
+            tile.workspaceDragging = false
+            root.rebuildCards()
+          }
+          onCanceled: {
+            tile.workspaceDragging = false
+            root.rebuildCards()
+          }
         }
 
         Text {
@@ -1955,7 +2029,7 @@ Item {
         id: inner
         width: parent.width
         height: tile.mapHeight
-        clip: !tile.paneDragging
+        clip: !tile.paneDragging && !tile.workspaceDragging
         keys: tile.paneDragKey !== "" && tile.panesDraggable ? [tile.paneDragKey] : []
         onEntered: function(drag) {
           var src = drag.source
@@ -2420,6 +2494,31 @@ Item {
               borderSpec: root.cardBorderSpec(hasCursor, isHere)
               radius: Style.cornerRadius
 
+              DropArea {
+                id: deskWsDrop
+                anchors.fill: parent
+                keys: !isUnsaved && card.kind === "desk" ? ["omadesk-ws"] : []
+                onDropped: function(drop) {
+                  var src = drop.source
+                  var fromDesk = src && src.fromDeskId ? String(src.fromDeskId) : ""
+                  var fromN = src ? src.fromWorkspaceN : null
+                  var toDesk = String(card.id || "")
+                  if (fromDesk && fromN != null && toDesk)
+                    root.applyWorkspaceMove(fromDesk, fromN, toDesk)
+                  drop.acceptProposedAction()
+                }
+
+                Rectangle {
+                  anchors.fill: parent
+                  visible: deskWsDrop.containsDrag
+                  z: 6
+                  color: "transparent"
+                  border.width: Style.normalBorderWidth + 1
+                  border.color: root.accent
+                  radius: Style.cornerRadius
+                }
+              }
+
               Column {
                 id: deskBody
                 width: parent.width - Style.space(24)
@@ -2491,11 +2590,15 @@ Item {
                       deskSlug: isUnsaved ? "unnamed" : String(card.id || "")
                       deskHere: isHere
                       panesDraggable: isUnsaved || isHere || card.life === "live"
+                      workspacesDraggable: !isUnsaved && card.kind === "desk" && !modelData.vacant
                       onLayoutChosen: function(layout) {
                         root.setWorkspaceLayout(modelData, layout, isUnsaved ? "unnamed" : String(card.id || ""), isHere)
                       }
                       onPaneDropped: function(address, fromN) {
                         root.movePaneOnDesk(address, fromN, modelData && modelData.n, isUnsaved ? "unnamed" : String(card.id || ""), isHere)
+                      }
+                      onWorkspaceDropped: function(fromDeskId, fromN) {
+                        root.applyWorkspaceMove(fromDeskId, fromN, String(card.id || ""), index)
                       }
                       onActivated: {
                         root.cursorIndex = cardIndex
