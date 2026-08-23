@@ -131,3 +131,7 @@ Unused. Intended Cloudflare Pages settings if it is wired later:
 Plugins run unsandboxed inside the long-lived Omarchy shell process, with
 your user permissions. Review the code before you enable it. Hyprctl is
 the only command used to move windows; apps are launched with `uwsm-app`.
+
+## Community
+
+Use common sense and decency. There is no formal code of conduct. We reserve the right to moderate this community to the extent of the law and the policy of the host. Write community@modoterra.xyz if you need us.
