@@ -449,7 +449,8 @@ Item {
   function deskMeta(desk, here) {
     if (typeof Model.formatDeskMeta === "function") {
       try {
-        var space = typeof Model.deskSpaceMeta === "function" ? Model.deskSpaceMeta(desk) : ""
+        var currentId = root.desksState ? root.desksState.currentId : null
+        var space = typeof Model.deskSpaceMeta === "function" ? Model.deskSpaceMeta(desk, root.stage, currentId) : ""
         return space + Model.formatDeskMeta(desk, Date.now(), !!here)
       } catch (e) {}
     }

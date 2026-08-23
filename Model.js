@@ -1048,7 +1048,7 @@ function pickerCards(state, query, stage, nowMs) {
       life: life,
       dnd: !!(desk.extras && desk.extras.dnd === "on"),
       tiles: deskTiles(deskPreviewSource(desk, stage, st.currentId), 10, life === "live" || here),
-      meta: deskSpaceMeta(desk) + formatDeskMeta(desk, nowMs, here),
+      meta: deskSpaceMeta(desk, stage, st.currentId) + formatDeskMeta(desk, nowMs, here),
       desk: desk
     })
   }
@@ -1127,12 +1127,12 @@ function unsavedCard(state, stage) {
   }
 }
 
-function deskSpaceMeta(desk) {
+function deskSpaceMeta(desk, stage, currentId) {
+  var tiles = deskTiles(deskPreviewSource(desk, stage, currentId), 10, false)
   var used = 0
-  var list = deskWorkspaces(desk)
   var i
-  for (i = 0; i < list.length; i++) {
-    if (list[i] && list[i].windows && list[i].windows.length) used += 1
+  for (i = 0; i < tiles.length; i++) {
+    if (tiles[i] && !tiles[i].vacant) used += 1
   }
   var screens = deskScreenCount(desk)
   var extra = screens > 1 ? screens + " Screens · Last Used " : "Last Used "
