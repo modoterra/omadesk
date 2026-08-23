@@ -1951,11 +1951,24 @@ Item {
         }
       }
 
-      Item {
+      DropArea {
         id: inner
         width: parent.width
         height: tile.mapHeight
         clip: !tile.paneDragging
+        keys: tile.paneDragKey !== "" && tile.panesDraggable ? [tile.paneDragKey] : []
+        onEntered: function(drag) {
+          var src = drag.source
+          if (src && Number(src.fromWorkspaceN) === Number(tile.tileData && tile.tileData.n))
+            drag.accepted = false
+        }
+        onDropped: function(drop) {
+          var src = drop.source
+          var addr = src && src.paneAddress ? String(src.paneAddress) : ""
+          if (addr)
+            tile.paneDropped(addr, src.fromWorkspaceN)
+          drop.acceptProposedAction()
+        }
 
         BorderSurface {
           anchors.fill: parent
@@ -1967,28 +1980,9 @@ Item {
           radius: Style.cornerRadius
         }
 
-        DropArea {
-          id: paneDrop
-          anchors.fill: parent
-          keys: tile.paneDragKey !== "" && tile.panesDraggable ? [tile.paneDragKey] : []
-          z: 1
-          onEntered: function(drag) {
-            var src = drag.source
-            if (src && Number(src.fromWorkspaceN) === Number(tile.tileData && tile.tileData.n))
-              drag.accepted = false
-          }
-          onDropped: function(drop) {
-            var src = drop.source
-            var addr = src && src.paneAddress ? String(src.paneAddress) : ""
-            if (addr)
-              tile.paneDropped(addr, src.fromWorkspaceN)
-            drop.acceptProposedAction()
-          }
-        }
-
         Rectangle {
           anchors.fill: parent
-          visible: paneDrop.containsDrag
+          visible: inner.containsDrag
           z: 7
           color: "transparent"
           border.width: Style.normalBorderWidth + 1
