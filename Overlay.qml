@@ -995,7 +995,7 @@ Item {
       try { next = Model.nextTiledLayout(current) } catch (e) { next = "scrolling" }
     }
     var argv = []
-    try { argv = Model.workspaceLayoutApplyArgv(root.layoutsDir, target, next) || [] } catch (e) { argv = [] }
+    try { argv = Model.workspaceLayoutApplyArgv(root.layoutsDir, target, next, slug) || [] } catch (e) { argv = [] }
     if (!argv.length) return
     if (layoutApplyProc.running) layoutApplyProc.running = false
     layoutApplyProc.command = argv

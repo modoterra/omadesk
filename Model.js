@@ -239,27 +239,38 @@ function workspaceLayoutKeyword(target, layout) {
   return ws + ", layout:" + normalizeTiledLayout(layout)
 }
 
+function workspaceLayoutUnpinLua(slug, n) {
+  if (!slug) return ""
+  var ws = n >= 1 && n <= 10 ? parkSelector(slug, n) : ""
+  ws = safeDispatchToken(ws)
+  if (!ws) return ""
+  return "hl.workspace_rule({ workspace = \"" + ws + "\", enabled = false })"
+}
+
 function workspaceLayoutsDir(home, stateHome) {
   var xdg = String(stateHome || "").trim()
   if (xdg) return xdg + "/omarchy/workspace-layouts"
   return String(home || "") + "/.local/state/omarchy/workspace-layouts"
 }
 
-function workspaceLayoutApplyArgv(dir, target, layout) {
+function workspaceLayoutApplyArgv(dir, target, layout, slug) {
   var folder = String(dir || "")
   var ws = workspaceLayoutPersistId(target)
   if (!folder || !ws) return []
   var lua = workspaceLayoutRuleLua(target, layout).replace(/\n+$/, "")
   if (!lua) return []
+  var n = Number(target)
+  var unpin = isFinite(n) && n >= 1 && n <= 10 ? workspaceLayoutUnpinLua(slug, n) : ""
+  if (unpin) unpin += "; "
   return [
     "bash",
     "-c",
-    "mkdir -p -- \"$1\" && printf '%s\\n' \"$2\" > \"$3\" && { hyprctl eval \"$2\" >/dev/null 2>&1 || hyprctl keyword workspace \"$4\"; }",
+    "mkdir -p -- \"$1\" && cleaned=0 && for f in \"$1\"/omadesk-*.lua; do [ -f \"$f\" ] || continue; cleaned=1; rm -f -- \"$f\"; done && printf '%s\\n' \"$2\" > \"$3\" && hyprctl eval \"$4$2\" >/dev/null 2>&1 || true && if [ \"$cleaned\" = 1 ]; then hyprctl reload config-only >/dev/null 2>&1 || true; fi",
     "omadesk-layout",
     folder,
     lua,
     folder + "/" + ws + ".lua",
-    workspaceLayoutKeyword(target, layout)
+    unpin
   ]
 }
 
