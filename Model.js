@@ -212,17 +212,16 @@ function hasHyprWorkspaceId(hyprId) {
 function workspaceLayoutTarget(tile, slug, here) {
   var n = focusWorkspaceN(tile && tile.n != null ? tile.n : tile)
   if (!n) return ""
-  if (here) {
-    var id = tile && tile.hyprId
-    if (hasHyprWorkspaceId(id) && Number(id) >= 1 && Number(id) <= 10) return String(Number(id))
-    return String(n)
-  }
+  var id = tile && tile.hyprId
+  if (hasHyprWorkspaceId(id)) return String(Number(id))
+  if (here) return String(n)
   return parkSelector(slug, n)
 }
 
 function workspaceLayoutPersistId(target) {
   var t = String(target || "")
   if (t.indexOf("special:") === 0) t = t.slice(8)
+  if (/^-?[0-9]+$/.test(t)) return t
   t = t.replace(/[^A-Za-z0-9._-]+/g, "-")
   t = t.replace(/^-+/, "").replace(/-+$/, "")
   return t
