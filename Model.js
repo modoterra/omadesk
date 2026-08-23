@@ -1069,7 +1069,6 @@ function pickerCards(state, query, stage, nowMs) {
       desk: desk
     })
   }
-  if (q === "") cards.push({ kind: "new", name: "+ New Desk", meta: "Enter Starts Empty", tiles: [] })
   return cards
 }
 

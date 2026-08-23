@@ -76,7 +76,7 @@ o.bind("SUPER + D", "Desks", "omarchy-shell shell toggle com.mdtrr.omadesk")
 | drag a window pane onto another tile | move that window on this desk |
 | drag a pane onto Empty | put it on the next free workspace |
 | D / L in the workspace header | toggle dwindle and scrolling |
-| enter | switch, return to **Unsaved**, or start an empty unsaved desk on **+ New Desk** |
+| enter | switch, or return to **Unsaved** |
 | n | save current as a named desk |
 | s | update desk you are on |
 | r | rename (display name; parking id stays) |
