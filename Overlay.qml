@@ -310,10 +310,15 @@ Item {
     return root.fill
   }
 
+  function reservedControlBorderWidth() {
+    var w = Math.max(1, Style.normalBorderWidth, Style.hoverBorderWidth)
+    if (Style.selectedBorderWidth > 0) w = Math.max(w, Style.selectedBorderWidth)
+    return w
+  }
+
   function cardBorderSpec(hasCursor, isHere) {
-    if (hasCursor) return Border.controlSpec("hover-cursor", root.foreground, root.accent)
-    if (isHere) return Border.controlSpec("selected", root.foreground, root.accent)
-    return Border.controlSpec("normal", root.foreground, root.accent)
+    var state = hasCursor ? "hover-cursor" : "normal"
+    return Border.withWidth(Border.controlSpec(state, root.foreground, root.accent), root.reservedControlBorderWidth())
   }
 
   function beginThemePick() {
@@ -1849,16 +1854,20 @@ Item {
     readonly property int iconPad: 4
     readonly property int chromePad: Style.space(6)
     readonly property int chromeGap: Style.space(4)
+    readonly property int chromeBorderWidth: root.reservedControlBorderWidth()
     readonly property int headerHeight: Math.max(
       idLabel.implicitHeight,
-      layoutBtn.visible ? layoutBtn.implicitHeight : 0,
-      Style.space(16)
+      layoutBtn.implicitHeight,
+      Style.space(20)
     )
     readonly property int mapWidth: Math.max(1, width - tile.chromePad * 2)
     readonly property int mapHeight: Math.round(tile.mapWidth / tile.aspect)
 
     color: root.tileFill
-    borderSpec: Border.controlSpec("normal", root.foreground, root.accent)
+    borderSpec: Border.withWidth(
+      Border.controlSpec("normal", tile.vacant ? root.dim : root.foreground, root.accent),
+      tile.chromeBorderWidth
+    )
     radius: Style.cornerRadius
     readonly property real aspect: {
       var a = Number(tile.tileData && tile.tileData.aspect)
@@ -1884,7 +1893,8 @@ Item {
 
         MouseArea {
           anchors.fill: parent
-          anchors.rightMargin: layoutBtn.visible ? layoutBtn.width + Style.space(4) : 0
+          anchors.rightMargin: tile.canToggleLayout ? layoutBtn.width + Style.space(4) : 0
+          z: 1
           enabled: tile.clickable
           hoverEnabled: tile.clickable
           cursorShape: tile.clickable ? Qt.PointingHandCursor : Qt.ArrowCursor
@@ -1907,8 +1917,10 @@ Item {
           id: layoutBtn
           anchors.right: parent.right
           anchors.verticalCenter: parent.verticalCenter
-          z: 2
-          visible: tile.canToggleLayout
+          z: tile.canToggleLayout ? 2 : 0
+          visible: true
+          opacity: tile.canToggleLayout ? 1 : 0
+          enabled: tile.canToggleLayout
           text: tile.scrollingLayout ? "L" : "D"
           tooltipText: tile.scrollingLayout ? "Scrolling" : "Dwindle"
           bordered: true
@@ -1935,7 +1947,10 @@ Item {
         BorderSurface {
           anchors.fill: parent
           color: Util.alpha(root.foreground, 0.04)
-          borderSpec: Border.controlSpec("normal", root.foreground, root.accent)
+          borderSpec: Border.withWidth(
+            Border.controlSpec("normal", tile.vacant ? root.dim : root.foreground, root.accent),
+            tile.chromeBorderWidth
+          )
           radius: Style.cornerRadius
         }
 
