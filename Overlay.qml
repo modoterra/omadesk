@@ -325,6 +325,7 @@ Item {
   function pickTheme(name) {
     root.patchExtras({ theme: name || "leave" })
     root.extrasPickingTheme = false
+    root.applyExtrasThemeNow(root.extrasDesk, root.extrasDraft)
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
@@ -848,20 +849,22 @@ Item {
   function confirmExtras() {
     var desk = root.extrasDesk
     if (!desk) { root.cancelDialog(); return }
+    var draft = root.extrasDraft
     var next = null
     if (typeof Model.setExtras === "function") {
-      try { next = Model.setExtras(root.desksState, desk.id, root.extrasDraft) } catch (e) { next = null }
+      try { next = Model.setExtras(root.desksState, desk.id, draft) } catch (e) { next = null }
     }
     if (!next) {
       next = Util.cloneJson(root.desksState || root.emptyState())
       var desks = next.desks || []
       for (var i = 0; i < desks.length; i++) {
-        if (String(desks[i].id) === String(desk.id)) desks[i].extras = Util.cloneJson(root.extrasDraft)
+        if (String(desks[i].id) === String(desk.id)) desks[i].extras = Util.cloneJson(draft)
       }
     }
     root.mode = "picker"
     root.extrasDesk = null
     root.assignState(next)
+    root.applyExtrasThemeNow(desk, draft)
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
@@ -1360,9 +1363,25 @@ Item {
 
   function applyTheme() {
     if (!root.pendingTheme) return
-    if (themeSetProc.running) return
+    if (themeSetProc.running) themeSetProc.running = false
     themeSetProc.command = ["omarchy", "theme", "set", root.pendingTheme]
     themeSetProc.running = true
+  }
+
+  function applyExtrasThemeNow(desk, extras) {
+    var theme = ""
+    var currentId = root.desksState ? root.desksState.currentId : null
+    if (typeof Model.extrasThemeNow === "function") {
+      try { theme = Model.extrasThemeNow(desk, extras, currentId) || "" } catch (e) { theme = "" }
+    } else if (desk && currentId && String(desk.id) === String(currentId)) {
+      if (typeof Model.themeAction === "function") {
+        try { theme = Model.themeAction(extras) || "" } catch (e) { theme = "" }
+      }
+    }
+    if (!theme) return
+    if (String(root.pendingTheme) === String(theme)) return
+    root.pendingTheme = String(theme)
+    root.applyTheme()
   }
 
   function finishSwitch() {
