@@ -1833,7 +1833,7 @@ Item {
     readonly property string paneDragKey: tile.deskSlug ? "omadesk-pane-" + tile.deskSlug : ""
 
     readonly property bool canToggleLayout: {
-      if (tile.vacant || !tile.tileData) return false
+      if (!tile.tileData) return false
       if (typeof Model.workspaceLayoutTarget === "function") {
         try { return !!Model.workspaceLayoutTarget(tile.tileData, tile.deskSlug, tile.deskHere) } catch (e) {}
       }
