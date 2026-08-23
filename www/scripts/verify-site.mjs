@@ -44,11 +44,14 @@ mustExist("public/preview.png");
 mustExist("public/favicon.svg");
 
 const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
-if (!readme.includes("https://omadesk.mdtrr.com")) {
-  throw new Error("README.md is missing the public site URL");
+if (readme.includes("The live host is")) {
+  throw new Error("README.md still treats omadesk.mdtrr.com as live");
 }
-if (!readme.includes("Root directory") || !readme.includes("`www`")) {
-  throw new Error("README.md is missing Cloudflare Pages settings");
+if (!readme.includes("Unused.") || !readme.includes("`www`")) {
+  throw new Error("README.md is missing the unused www/ note");
+}
+if (!readme.includes("Root directory") || !readme.includes("omadesk.mdtrr.com")) {
+  throw new Error("README.md is missing parked Cloudflare Pages settings");
 }
 
 console.log("site verification ok");

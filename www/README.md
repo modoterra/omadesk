@@ -1,6 +1,7 @@
-# omadesk.mdtrr.com
+# www
 
-Vite + React + TypeScript site for Desks.
+Vite + React + TypeScript landing for Desks. Unused. Intended host when
+published: `omadesk.mdtrr.com`.
 
 ## Commands
 
@@ -14,7 +15,7 @@ npm test
 
 ## Cloudflare Pages
 
-The live host is [https://omadesk.mdtrr.com](https://omadesk.mdtrr.com).
+Nothing publishes this folder. Settings if it is wired later:
 
 | Setting | Value |
 | --- | --- |

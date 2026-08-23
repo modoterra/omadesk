@@ -20,8 +20,6 @@ on; a missing display is skipped. The bar still shows 1 2 3. The
 scratchpad itself (`special:scratchpad`) stays global and is never
 parked, restored, or stored.
 
-Site: [https://omadesk.mdtrr.com](https://omadesk.mdtrr.com)
-
 ![Desks picker](preview.png)
 
 Live truth while the session is alive is parked window addresses. Two
@@ -108,16 +106,16 @@ omarchy plugin validate .
 qmllint -I "$OMARCHY_PATH/shell" Overlay.qml BarWidget.qml
 ```
 
-The public site lives in `www/`:
+A Vite landing sits in `www/`. Nothing publishes it.
 
 ```sh
 npm --prefix www test
 npm --prefix www run build
 ```
 
-## Cloudflare Pages
+## Site (`www/`)
 
-The live host is [https://omadesk.mdtrr.com](https://omadesk.mdtrr.com).
+Unused. Intended Cloudflare Pages settings if it is wired later:
 
 | Setting | Value |
 | --- | --- |
@@ -126,10 +124,6 @@ The live host is [https://omadesk.mdtrr.com](https://omadesk.mdtrr.com).
 | Build output | `dist` |
 | Production branch | `main` |
 | Custom domain | `omadesk.mdtrr.com` |
-
-SPA deep links use `www/public/404.html` (bounce to `/?/path`) and the restore
-script in `www/index.html`. `www/public/_redirects` rewrites unknown paths to
-`/index.html` with HTTP 200.
 
 ## Security
 
