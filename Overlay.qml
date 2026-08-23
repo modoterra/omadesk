@@ -1571,12 +1571,6 @@ Item {
     } else if (!root.filterOpen && event.text === "e") {
       root.openExtras()
       event.accepted = true
-    } else if (!root.filterOpen && event.text === "x") {
-      root.openClose()
-      event.accepted = true
-    } else if (!root.filterOpen && event.text === "o") {
-      root.wakeHighlighted()
-      event.accepted = true
     }
   }
 
@@ -2791,9 +2785,7 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             KeyHint { chord: "enter"; label: "Switch"; sep: true }
             KeyHint { chord: "s"; label: "Update"; sep: true }
-            KeyHint { chord: "n"; label: "New"; sep: true }
-            KeyHint { chord: "x"; label: "Close"; sep: true }
-            KeyHint { chord: "o"; label: "Open" }
+            KeyHint { chord: "n"; label: "New" }
           }
 
           Row {
