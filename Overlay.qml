@@ -2093,62 +2093,22 @@ Item {
       font.weight: Font.Medium
     }
 
-    Row {
+    Button {
       visible: tile.canToggleLayout
       anchors.right: parent.right
       anchors.top: parent.top
       anchors.margins: tile.numberInset
       z: 4
-      spacing: 3
-      height: layoutSwitch.implicitHeight
-
-      Text {
-        text: "D"
-        color: tile.scrollingLayout ? root.dim : root.foreground
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.caption
-        font.bold: true
-        anchors.verticalCenter: parent.verticalCenter
-
-        MouseArea {
-          anchors.fill: parent
-          anchors.margins: -2
-          enabled: tile.canToggleLayout
-          cursorShape: Qt.PointingHandCursor
-          preventStealing: true
-          onClicked: tile.layoutChosen("dwindle")
-        }
-      }
-
-      ToggleSwitch {
-        id: layoutSwitch
-        checked: tile.scrollingLayout
-        interactive: tile.canToggleLayout
-        cursorRing: false
-        trackHeight: 12
-        foreground: root.foreground
-        accent: root.accent
-        busy: layoutMkdirProc.running || layoutEvalProc.running
-        onToggled: tile.layoutChosen(tile.scrollingLayout ? "dwindle" : "scrolling")
-      }
-
-      Text {
-        text: "L"
-        color: tile.scrollingLayout ? root.foreground : root.dim
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.caption
-        font.bold: true
-        anchors.verticalCenter: parent.verticalCenter
-
-        MouseArea {
-          anchors.fill: parent
-          anchors.margins: -2
-          enabled: tile.canToggleLayout
-          cursorShape: Qt.PointingHandCursor
-          preventStealing: true
-          onClicked: tile.layoutChosen("scrolling")
-        }
-      }
+      text: tile.scrollingLayout ? "L" : "D"
+      tooltipText: tile.scrollingLayout ? "Scrolling" : "Dwindle"
+      bordered: true
+      foreground: root.foreground
+      accent: root.accent
+      fontFamily: root.fontFamily
+      fontSize: Style.font.caption
+      horizontalPadding: Style.space(6)
+      verticalPadding: Style.space(2)
+      onClicked: tile.layoutChosen(tile.scrollingLayout ? "dwindle" : "scrolling")
     }
 
     MouseArea {
