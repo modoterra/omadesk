@@ -1857,13 +1857,17 @@ test("59 workspace tiledLayout toggle uses Omarchy ids and lua rules", function(
   assert.strictEqual(model.hasHyprWorkspaceId(null), false)
   assert.strictEqual(
     model.workspaceLayoutRuleLua(3, "scrolling"),
-    'hl.workspace_rule({ workspace = "3", layout = "scrolling" })\n'
+    'hl.workspace_rule({ workspace = "name:3", layout = "scrolling" })\n'
   )
   assert.strictEqual(
     model.workspaceLayoutRuleLua("special:omadesk-call-1", "dwindle"),
     'hl.workspace_rule({ workspace = "special:omadesk-call-1", layout = "dwindle" })\n'
   )
-  assert.strictEqual(model.workspaceLayoutKeyword(3, "scrolling"), "3, layout:scrolling")
+  assert.strictEqual(model.workspaceLayoutKeyword(3, "scrolling"), "name:3, layout:scrolling")
+  assert.strictEqual(model.workspaceLayoutSelector(1), "name:1")
+  assert.strictEqual(model.workspaceLayoutSelector("1"), "name:1")
+  assert.strictEqual(model.workspaceLayoutSelector(10), "name:10")
+  assert.strictEqual(model.workspaceLayoutSelector("-83"), "-83")
   assert.strictEqual(model.workspaceLayoutKeyword("special:omadesk-call-1", "scrolling"), "special:omadesk-call-1, layout:scrolling")
   assert.strictEqual(model.workspaceLayoutTarget({ n: 3, hyprId: 3 }, "writing", true), "3")
   assert.strictEqual(model.workspaceLayoutTarget({ n: 5, hyprId: 5 }, "main", true), "5")
@@ -2012,12 +2016,14 @@ test("63 workspace layout apply argv writes Omarchy lua then evals", function() 
   assert.ok(argv[2].indexOf("hyprctl reload config-only") >= 0)
   assert.ok(argv[2].indexOf("hyprctl keyword workspace") === -1)
   assert.strictEqual(argv[4], dir)
-  assert.strictEqual(argv[5], 'hl.workspace_rule({ workspace = "2", layout = "scrolling" })')
+  assert.strictEqual(argv[5], 'hl.workspace_rule({ workspace = "name:2", layout = "scrolling" })')
   assert.strictEqual(argv[6], dir + "/2.lua")
-  assert.strictEqual(argv[7], "")
+  assert.ok(argv[7].indexOf('workspace = "2"') >= 0)
+  assert.ok(argv[7].indexOf("enabled = false") >= 0)
   const withSlug = model.workspaceLayoutApplyArgv(dir, 1, "dwindle", "main")
-  assert.strictEqual(withSlug[5], 'hl.workspace_rule({ workspace = "1", layout = "dwindle" })')
+  assert.strictEqual(withSlug[5], 'hl.workspace_rule({ workspace = "name:1", layout = "dwindle" })')
   assert.strictEqual(withSlug[6], dir + "/1.lua")
+  assert.ok(withSlug[7].indexOf('workspace = "1"') >= 0)
   assert.ok(withSlug[7].indexOf('workspace = "special:omadesk-main-1"') >= 0)
   assert.ok(withSlug[7].indexOf("enabled = false") >= 0)
   const special = model.workspaceLayoutApplyArgv(dir, "special:omadesk-call-1", "dwindle")
@@ -2173,13 +2179,13 @@ test("70 layout apply uses Super+L workspace ids and does not pin a second rule"
   assert.strictEqual(first[6], dir + "/3.lua")
   assert.strictEqual(second[6], dir + "/3.lua")
   assert.strictEqual(model.workspaceLayoutPersistId("3"), "3")
-  assert.ok(first[5].indexOf('workspace = "3"') >= 0)
+  assert.ok(first[5].indexOf('workspace = "name:3"') >= 0)
   assert.ok(first[5].indexOf('layout = "scrolling"') >= 0)
-  assert.ok(second[5].indexOf('workspace = "3"') >= 0)
+  assert.ok(second[5].indexOf('workspace = "name:3"') >= 0)
   assert.ok(second[5].indexOf('layout = "dwindle"') >= 0)
   assert.ok(first[5].indexOf("special:") === -1)
   assert.ok(second[5].indexOf("special:") === -1)
-  assert.ok(first[5].indexOf("name:") === -1)
+  assert.ok(first[7].indexOf('workspace = "3"') >= 0)
   assert.ok(first[7].indexOf('special:omadesk-writing-3') >= 0)
   assert.ok(first[7].indexOf("enabled = false") >= 0)
   assert.ok(second[7].indexOf('special:omadesk-writing-3') >= 0)
@@ -2194,11 +2200,10 @@ test("70 layout apply uses Super+L workspace ids and does not pin a second rule"
   assert.strictEqual(model.workspaceLayoutPersistId("-83"), "-83")
   assert.strictEqual(model.workspaceLayoutRuleLua("-83", "dwindle"), 'hl.workspace_rule({ workspace = "-83", layout = "dwindle" })\n')
   assert.strictEqual(model.workspaceLayoutKeyword("-83", "dwindle"), "-83, layout:dwindle")
-  assert.strictEqual(
-    model.workspaceLayoutUnpinLua("main", 1),
-    'hl.workspace_rule({ workspace = "special:omadesk-main-1", enabled = false })'
-  )
-  assert.strictEqual(model.workspaceLayoutUnpinLua("", 1), "")
+  assert.ok(model.workspaceLayoutUnpinLua("main", 1).indexOf('workspace = "1"') >= 0)
+  assert.ok(model.workspaceLayoutUnpinLua("main", 1).indexOf('special:omadesk-main-1') >= 0)
+  assert.ok(model.workspaceLayoutUnpinLua("", 1).indexOf('workspace = "1"') >= 0)
+  assert.ok(model.workspaceLayoutUnpinLua("", 1).indexOf("special:") === -1)
 })
 
 console.log("ok")

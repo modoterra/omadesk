@@ -227,24 +227,35 @@ function workspaceLayoutPersistId(target) {
   return t
 }
 
-function workspaceLayoutRuleLua(target, layout) {
+function workspaceLayoutSelector(target) {
   var ws = safeDispatchToken(target)
+  if (!ws) return ""
+  if (/^(10|[1-9])$/.test(ws)) return "name:" + ws
+  return ws
+}
+
+function workspaceLayoutRuleLua(target, layout) {
+  var ws = workspaceLayoutSelector(target)
   if (!ws) return ""
   return "hl.workspace_rule({ workspace = \"" + ws + "\", layout = \"" + normalizeTiledLayout(layout) + "\" })\n"
 }
 
 function workspaceLayoutKeyword(target, layout) {
-  var ws = safeDispatchToken(target)
+  var ws = workspaceLayoutSelector(target)
   if (!ws) return ""
   return ws + ", layout:" + normalizeTiledLayout(layout)
 }
 
 function workspaceLayoutUnpinLua(slug, n) {
-  if (!slug) return ""
-  var ws = n >= 1 && n <= 10 ? parkSelector(slug, n) : ""
-  ws = safeDispatchToken(ws)
-  if (!ws) return ""
-  return "hl.workspace_rule({ workspace = \"" + ws + "\", enabled = false })"
+  var parts = []
+  if (n >= 1 && n <= 10) {
+    parts.push("hl.workspace_rule({ workspace = \"" + String(n) + "\", enabled = false })")
+  }
+  if (slug) {
+    var lot = n >= 1 && n <= 10 ? safeDispatchToken(parkSelector(slug, n)) : ""
+    if (lot) parts.push("hl.workspace_rule({ workspace = \"" + lot + "\", enabled = false })")
+  }
+  return parts.join("; ")
 }
 
 function workspaceLayoutsDir(home, stateHome) {
