@@ -1896,6 +1896,31 @@ test("59 workspace tiledLayout toggle uses Omarchy ids and lua rules", function(
   assert.strictEqual(parkedTile.hyprId, -83)
 })
 
+test("60 same-desk pane move: numbered when here, lot when parked", function() {
+  const addr = "0x55f11fe15110"
+  assert.strictEqual(
+    model.sameDeskMoveDispatch(addr, 1, 3, "writing", true),
+    'hl.dsp.window.move({ workspace = "3", follow = false, window = "address:0x55f11fe15110" })'
+  )
+  assert.strictEqual(
+    model.sameDeskMoveDispatch(addr, 1, 2, "writing", false),
+    'hl.dsp.window.move({ workspace = "special:omadesk-writing-2", follow = false, window = "address:0x55f11fe15110" })'
+  )
+  assert.strictEqual(
+    model.sameDeskMoveDispatch(addr, 1, 2, "unnamed", false),
+    'hl.dsp.window.move({ workspace = "special:omadesk-unnamed-2", follow = false, window = "address:0x55f11fe15110" })'
+  )
+  assert.strictEqual(model.sameDeskMoveDispatch(addr, 2, 2, "writing", true), "")
+  assert.strictEqual(model.sameDeskMoveDispatch("", 1, 3, "writing", true), "")
+  assert.strictEqual(model.sameDeskMoveDispatch(addr, 1, 0, "writing", true), "")
+  const panes = model.windowPanes([
+    { class: "foot", address: "0xaaa", at: [0, 0], size: [400, 800] },
+    { class: "chromium", address: "0xbbb", at: [400, 0], size: [400, 800] }
+  ])
+  assert.strictEqual(panes[0].address, "0xaaa")
+  assert.strictEqual(panes[1].address, "0xbbb")
+})
+
 console.log("ok")
 
 

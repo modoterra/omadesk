@@ -252,6 +252,15 @@ function moveDispatch(workspaceSelector, address) {
   return "hl.dsp.window.move({ workspace = \"" + ws + "\", follow = false, window = \"" + addr + "\" })"
 }
 
+function sameDeskMoveDispatch(address, fromN, toN, slug, here) {
+  var dest = focusWorkspaceN(toN)
+  if (!dest || !windowSelector(address)) return ""
+  var src = focusWorkspaceN(fromN)
+  if (src && src === dest) return ""
+  var ws = here ? String(dest) : parkSelector(slug || "unnamed", dest)
+  return moveDispatch(ws, address)
+}
+
 function closeDispatch(address) {
   var addr = windowSelector(address)
   if (!addr) return ""
@@ -1972,7 +1981,8 @@ function paneRecord(win, x, y, w, h) {
     icon: iconName(win),
     class: String((win && (win.class || win.initialClass)) || ""),
     letters: iconLetters(win),
-    floating: !!(win && win.floating)
+    floating: !!(win && win.floating),
+    address: win && win.address ? stripAddress(win.address) : ""
   }
 }
 

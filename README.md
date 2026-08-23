@@ -73,6 +73,7 @@ o.bind("SUPER + D", "Desks", "omarchy-shell shell toggle com.mdtrr.omadesk")
 | j / k, arrows, h l | move cursor |
 | 1–9 | jump to card |
 | click a workspace tile | switch onto that workspace |
+| drag a window pane onto another tile | move that window on this desk |
 | D / L on a workspace tile | toggle dwindle and scrolling |
 | enter | switch, return to **Unsaved**, or start an empty unsaved desk on **+ New Desk** |
 | n | save current as a named desk |

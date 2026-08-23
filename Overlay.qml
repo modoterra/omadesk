@@ -1047,6 +1047,16 @@ Item {
     layoutMkdirProc.running = true
   }
 
+  function movePaneOnDesk(address, fromN, toN, slug, here) {
+    if (root.busy || movePaneProc.running) return
+    if (typeof Model.sameDeskMoveDispatch !== "function") return
+    var lua = ""
+    try { lua = Model.sameDeskMoveDispatch(address, fromN, toN, slug, here) } catch (e) { lua = "" }
+    if (!lua) return
+    movePaneProc.command = ["hyprctl", "dispatch", lua]
+    movePaneProc.running = true
+  }
+
   function focusWorkspaceNow(n) {
     if (n == null || n === "") return
     var lua = root.focusDispatch(String(n))
@@ -1715,6 +1725,13 @@ Item {
   }
 
   Process {
+    id: movePaneProc
+    onExited: function() {
+      root.refreshStage()
+    }
+  }
+
+  Process {
     id: mkdirProc
     onExited: function(code) {
       if (code === 0) root.desksDirReady = true
@@ -1891,6 +1908,12 @@ Item {
     property bool clickable: false
     signal activated()
     signal layoutChosen(string layout)
+    signal paneDropped(string address, var fromN)
+
+    property string deskSlug: ""
+    property bool panesDraggable: false
+    property bool paneDragging: false
+    readonly property string paneDragKey: tile.deskSlug ? "omadesk-pane-" + tile.deskSlug : ""
 
     readonly property bool canToggleLayout: {
       if (!tile.tileData || typeof Model.hasHyprWorkspaceId !== "function") return false
@@ -1930,7 +1953,36 @@ Item {
     }
     implicitHeight: Math.round(width / tile.aspect) + (tile.hasUnder ? tile.underStrip : 0)
     implicitWidth: Style.space(96)
-    clip: true
+    clip: !tile.paneDragging
+
+    DropArea {
+      id: paneDrop
+      anchors.fill: parent
+      keys: tile.paneDragKey !== "" && tile.panesDraggable ? [tile.paneDragKey] : []
+      z: 1
+      onEntered: function(drag) {
+        var src = drag.source
+        if (src && Number(src.fromWorkspaceN) === Number(tile.tileData && tile.tileData.n))
+          drag.accepted = false
+      }
+      onDropped: function(drop) {
+        var src = drop.source
+        var addr = src && src.paneAddress ? String(src.paneAddress) : ""
+        if (addr)
+          tile.paneDropped(addr, src.fromWorkspaceN)
+        drop.acceptProposedAction()
+      }
+    }
+
+    Rectangle {
+      anchors.fill: parent
+      visible: paneDrop.containsDrag
+      z: 7
+      color: "transparent"
+      border.width: Style.normalBorderWidth + 1
+      border.color: root.accent
+      radius: Style.cornerRadius
+    }
 
     Item {
       id: map
@@ -1938,16 +1990,21 @@ Item {
       anchors.margins: 2
       anchors.bottomMargin: tile.hasUnder ? tile.underStrip + 2 : 2
       visible: !tile.vacant && tile.panes && tile.panes.length
+      z: 5
 
       Repeater {
         model: map.visible ? tile.panes : []
 
         delegate: Rectangle {
+          id: pane
           required property var modelData
           readonly property real px: Number(modelData && modelData.x)
           readonly property real py: Number(modelData && modelData.y)
           readonly property real pw: Number(modelData && modelData.w)
           readonly property real ph: Number(modelData && modelData.h)
+          readonly property string paneAddress: String((modelData && modelData.address) || "")
+          readonly property var fromWorkspaceN: tile.tileData ? tile.tileData.n : null
+          readonly property bool canDragPane: tile.panesDraggable && pane.paneAddress !== "" && tile.paneDragKey !== ""
 
           x: map.width * (isFinite(px) ? px : 0) + tile.paneGap / 2
           y: map.height * (isFinite(py) ? py : 0) + tile.paneGap / 2
@@ -1957,6 +2014,24 @@ Item {
           border.width: Style.normalBorderWidth
           border.color: Style.normalBorderFor(root.foreground, root.accent)
           radius: Style.cornerRadius
+          z: paneDrag.drag.active ? 20 : 0
+          opacity: paneDrag.drag.active ? 0.92 : 1
+
+          Drag.active: paneDrag.drag.active
+          Drag.hotSpot.x: width / 2
+          Drag.hotSpot.y: height / 2
+          Drag.keys: pane.canDragPane ? [tile.paneDragKey] : []
+          Drag.source: pane
+          Drag.proposedAction: Qt.MoveAction
+
+          function resetPanePos() {
+            pane.x = Qt.binding(function() {
+              return map.width * (isFinite(pane.px) ? pane.px : 0) + tile.paneGap / 2
+            })
+            pane.y = Qt.binding(function() {
+              return map.height * (isFinite(pane.py) ? pane.py : 0) + tile.paneGap / 2
+            })
+          }
 
           Image {
             id: paneIcon
@@ -1979,6 +2054,30 @@ Item {
             font.family: root.fontFamily
             font.pixelSize: Math.max(Style.font.caption, Math.min(parent.width, parent.height) * 0.32)
             font.weight: Font.DemiBold
+          }
+
+          MouseArea {
+            id: paneDrag
+            anchors.fill: parent
+            enabled: pane.canDragPane
+            hoverEnabled: pane.canDragPane
+            cursorShape: pane.canDragPane ? Qt.OpenHandCursor : Qt.ArrowCursor
+            preventStealing: true
+            drag.target: pane
+            drag.threshold: 10
+            onPressed: tile.paneDragging = true
+            onReleased: {
+              if (pane.Drag.active)
+                pane.Drag.drop()
+              else if (tile.clickable)
+                tile.activated()
+              tile.paneDragging = false
+              pane.resetPanePos()
+            }
+            onCanceled: {
+              tile.paneDragging = false
+              pane.resetPanePos()
+            }
           }
         }
       }
@@ -2085,7 +2184,7 @@ Item {
       visible: tile.tileId !== ""
       x: tile.numberInset
       y: tile.numberInset
-      z: 2
+      z: 6
       text: tile.tileId
       color: root.foreground
       font.family: root.fontFamily
@@ -2098,7 +2197,7 @@ Item {
       anchors.right: parent.right
       anchors.top: parent.top
       anchors.margins: tile.numberInset
-      z: 4
+      z: 8
       text: tile.scrollingLayout ? "L" : "D"
       tooltipText: tile.scrollingLayout ? "Scrolling" : "Dwindle"
       bordered: true
@@ -2116,7 +2215,7 @@ Item {
       enabled: tile.clickable
       hoverEnabled: tile.clickable
       cursorShape: tile.clickable ? Qt.PointingHandCursor : Qt.ArrowCursor
-      z: 3
+      z: 2
       preventStealing: true
       onClicked: tile.activated()
     }
@@ -2403,7 +2502,12 @@ Item {
                       height: implicitHeight
                       tileData: modelData
                       clickable: true
+                      deskSlug: isUnsaved ? "unnamed" : String(card.id || "")
+                      panesDraggable: isUnsaved || isHere || card.life === "live"
                       onLayoutChosen: function(layout) { root.setWorkspaceLayout(modelData, layout) }
+                      onPaneDropped: function(address, fromN) {
+                        root.movePaneOnDesk(address, fromN, modelData && modelData.n, isUnsaved ? "unnamed" : String(card.id || ""), isHere)
+                      }
                       onActivated: {
                         root.cursorIndex = cardIndex
                         var n = modelData && modelData.n
