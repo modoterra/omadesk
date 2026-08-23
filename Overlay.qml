@@ -48,6 +48,10 @@ Item {
   property bool extrasPickingTheme: false
   property var themeNames: []
   property string pendingForgetId: ""
+  property string pendingLayoutPath: ""
+  property string pendingLayoutLua: ""
+  property string pendingLayoutEval: ""
+  property string pendingLayoutKeyword: ""
 
   property color accent: Color.accent
   property color urgent: Color.urgent
@@ -72,6 +76,11 @@ Item {
   property int tileColumns: 2
   readonly property string desksDir: (Quickshell.env("HOME") || "") + "/.config/omarchy/omadesk"
   readonly property string desksPath: desksDir + "/desks.json"
+  readonly property string layoutsDir: {
+    var xdg = Quickshell.env("XDG_STATE_HOME")
+    if (xdg) return String(xdg) + "/omarchy/workspace-layouts"
+    return (Quickshell.env("HOME") || "") + "/.local/state/omarchy/workspace-layouts"
+  }
   readonly property bool dialogOpen: root.mode !== "picker"
   readonly property int deskCount: (root.desksState && root.desksState.desks && root.desksState.desks.length) ? root.desksState.desks.length : 0
   readonly property bool pickerEmpty: root.mode === "picker" && root.deskCount === 0
@@ -1006,6 +1015,31 @@ Item {
     return null
   }
 
+  function toggleWorkspaceLayout(tileData) {
+    if (root.busy || layoutMkdirProc.running || layoutEvalProc.running) return
+    if (!tileData || typeof Model.hasHyprWorkspaceId !== "function") return
+    var hyprId = tileData.hyprId
+    if (!Model.hasHyprWorkspaceId(hyprId)) return
+    var next = "scrolling"
+    if (typeof Model.nextTiledLayout === "function") {
+      try { next = Model.nextTiledLayout(tileData.tiledLayout) } catch (e) { next = "scrolling" }
+    }
+    var lua = ""
+    if (typeof Model.workspaceLayoutRuleLua === "function") {
+      try { lua = Model.workspaceLayoutRuleLua(hyprId, next) } catch (e) { lua = "" }
+    }
+    if (!lua) return
+    root.pendingLayoutPath = root.layoutsDir + "/" + String(hyprId) + ".lua"
+    root.pendingLayoutLua = lua
+    root.pendingLayoutEval = lua.replace(/\n+$/, "")
+    root.pendingLayoutKeyword = ""
+    if (typeof Model.workspaceLayoutKeyword === "function") {
+      try { root.pendingLayoutKeyword = Model.workspaceLayoutKeyword(hyprId, next) } catch (e) { root.pendingLayoutKeyword = "" }
+    }
+    layoutMkdirProc.command = ["mkdir", "-p", root.layoutsDir]
+    layoutMkdirProc.running = true
+  }
+
   function focusWorkspaceNow(n) {
     if (n == null || n === "") return
     var lua = root.focusDispatch(String(n))
@@ -1625,6 +1659,13 @@ Item {
   }
 
   FileView {
+    id: layoutFile
+    path: ""
+    atomicWrites: true
+    printErrors: false
+  }
+
+  FileView {
     id: desksFile
     path: root.desksPath
     watchChanges: true
@@ -1636,6 +1677,34 @@ Item {
     }
     onLoadFailed: root.applyDesksRaw("")
     onFileChanged: reload()
+  }
+
+  Process {
+    id: layoutMkdirProc
+    onExited: function(code) {
+      if (code === 0 && root.pendingLayoutPath && root.pendingLayoutLua) {
+        layoutFile.path = root.pendingLayoutPath
+        layoutFile.setText(root.pendingLayoutLua)
+      }
+      var evalLua = root.pendingLayoutEval
+      root.pendingLayoutPath = ""
+      root.pendingLayoutLua = ""
+      root.pendingLayoutEval = ""
+      if (!evalLua) return
+      layoutEvalProc.command = ["hyprctl", "eval", evalLua]
+      layoutEvalProc.running = true
+    }
+  }
+
+  Process {
+    id: layoutEvalProc
+    onExited: function(code) {
+      if (code !== 0 && root.pendingLayoutKeyword) {
+        Quickshell.execDetached(["hyprctl", "keyword", "workspace", root.pendingLayoutKeyword])
+      }
+      root.pendingLayoutKeyword = ""
+      root.refreshStage()
+    }
   }
 
   Process {
@@ -1814,6 +1883,19 @@ Item {
     property bool compact: false
     property bool clickable: false
     signal activated()
+    signal layoutToggled()
+
+    readonly property bool canToggleLayout: {
+      if (!tile.tileData || typeof Model.hasHyprWorkspaceId !== "function") return false
+      try { return !!Model.hasHyprWorkspaceId(tile.tileData.hyprId) } catch (e) { return false }
+    }
+    readonly property string layoutChipLabel: {
+      var lay = "dwindle"
+      if (typeof Model.normalizeTiledLayout === "function") {
+        try { lay = Model.normalizeTiledLayout(tile.tileData && tile.tileData.tiledLayout) } catch (e) { lay = "dwindle" }
+      }
+      return lay === "scrolling" ? "Scroll" : "Dwindle"
+    }
 
     readonly property bool vacant: !!(tile.tileData && tile.tileData.vacant)
     readonly property string tileId: {
@@ -2002,6 +2084,32 @@ Item {
       font.family: root.fontFamily
       font.pixelSize: Style.font.caption
       font.weight: Font.Medium
+    }
+
+    Item {
+      visible: tile.canToggleLayout
+      anchors.right: parent.right
+      anchors.top: parent.top
+      anchors.margins: tile.numberInset
+      z: 4
+      width: layoutPill.implicitWidth
+      height: layoutPill.implicitHeight
+
+      StatusPill {
+        id: layoutPill
+        anchors.centerIn: parent
+        label: tile.layoutChipLabel
+        tone: root.dim
+      }
+
+      MouseArea {
+        anchors.fill: parent
+        enabled: tile.canToggleLayout
+        hoverEnabled: true
+        cursorShape: Qt.PointingHandCursor
+        preventStealing: true
+        onClicked: tile.layoutToggled()
+      }
     }
 
     MouseArea {
@@ -2296,6 +2404,7 @@ Item {
                       height: implicitHeight
                       tileData: modelData
                       clickable: true
+                      onLayoutToggled: root.toggleWorkspaceLayout(modelData)
                       onActivated: {
                         root.cursorIndex = cardIndex
                         var n = modelData && modelData.n
@@ -2441,6 +2550,7 @@ Item {
                   width: Math.floor((parent.width - Style.space(6) * (root.tileColumns - 1)) / root.tileColumns)
                   height: implicitHeight
                   tileData: modelData
+                  onLayoutToggled: root.toggleWorkspaceLayout(modelData)
                 }
               }
             }

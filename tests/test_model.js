@@ -1845,6 +1845,57 @@ test("57 reboot restore keeps chromium profile, terminal cwd, and floating size"
   assert.ok(termRules.indexOf("workspace 3") >= 0)
 })
 
+test("59 workspace tiledLayout toggle uses Omarchy ids and lua rules", function() {
+  assert.strictEqual(model.normalizeTiledLayout("scrolling"), "scrolling")
+  assert.strictEqual(model.normalizeTiledLayout("Scroll"), "scrolling")
+  assert.strictEqual(model.normalizeTiledLayout(""), "dwindle")
+  assert.strictEqual(model.normalizeTiledLayout("master"), "dwindle")
+  assert.strictEqual(model.nextTiledLayout("dwindle"), "scrolling")
+  assert.strictEqual(model.nextTiledLayout("scrolling"), "dwindle")
+  assert.strictEqual(model.hasHyprWorkspaceId(1), true)
+  assert.strictEqual(model.hasHyprWorkspaceId(-83), true)
+  assert.strictEqual(model.hasHyprWorkspaceId(0), false)
+  assert.strictEqual(model.hasHyprWorkspaceId(null), false)
+  assert.strictEqual(
+    model.workspaceLayoutRuleLua(3, "scrolling"),
+    'hl.workspace_rule({ workspace = "3", layout = "scrolling" })\n'
+  )
+  assert.strictEqual(
+    model.workspaceLayoutRuleLua(-83, "dwindle"),
+    'hl.workspace_rule({ workspace = "-83", layout = "dwindle" })\n'
+  )
+  assert.strictEqual(model.workspaceLayoutKeyword(3, "scrolling"), "3, layout:scrolling")
+  assert.strictEqual(
+    model.workspaceLayoutsDir("/home/ada", ""),
+    "/home/ada/.local/state/omarchy/workspace-layouts"
+  )
+  assert.strictEqual(
+    model.workspaceLayoutsDir("/home/ada", "/tmp/state"),
+    "/tmp/state/omarchy/workspace-layouts"
+  )
+  const withLayouts = workspaces.map(function(ws) {
+    const row = clone(ws)
+    if (row.id === 1) row.tiledLayout = "scrolling"
+    if (row.id === -83) row.tiledLayout = "scrolling"
+    return row
+  })
+  const stage = model.parseStage(clientsText, JSON.stringify(withLayouts))
+  const ws1 = stage.workspaces.filter((w) => w.n === 1)[0]
+  assert.strictEqual(ws1.tiledLayout, "scrolling")
+  assert.strictEqual(ws1.hyprId, 1)
+  const callLot = stage.parked.filter((p) => p.slug === "call" && p.n === 1)[0]
+  assert.strictEqual(callLot.tiledLayout, "scrolling")
+  assert.strictEqual(callLot.hyprId, -83)
+  const liveTiles = model.deskTiles(stage)
+  assert.strictEqual(liveTiles[0].tiledLayout, "scrolling")
+  assert.strictEqual(liveTiles[0].hyprId, 1)
+  const parkedStage = model.parkedToStage(stage.parked.filter((p) => p.slug === "call"))
+  const parkedTile = model.deskTiles(parkedStage)[0]
+  assert.strictEqual(parkedTile.n, 1)
+  assert.strictEqual(parkedTile.tiledLayout, "scrolling")
+  assert.strictEqual(parkedTile.hyprId, -83)
+})
+
 console.log("ok")
 
 

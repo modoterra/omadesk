@@ -106,6 +106,7 @@ function parseStage(clientsJson, workspacesJson, monitorsJson) {
   var clients = parseJsonArg(clientsJson)
   var workspaces = parseJsonArg(workspacesJson)
   var layout = parseLayout(monitorsJson, workspaces)
+  var layouts = workspaceLayoutIndex(workspaces)
   var monitors = connectedMonitorNames(monitorsJson, workspaces)
   var groups = {}
   var windows = []
@@ -115,6 +116,7 @@ function parseStage(clientsJson, workspacesJson, monitorsJson) {
     var client = clients[i]
     var lot = parseParkedLot(client)
     if (lot) {
+      var lotMeta = layouts.lots[String(lot.slug) + ":" + String(lot.n)] || {}
       parked.push(copyGeom({
         slug: lot.slug,
         n: lot.n,
@@ -123,7 +125,9 @@ function parseStage(clientsJson, workspacesJson, monitorsJson) {
         initialClass: String(client.initialClass || ""),
         title: String(client.title || ""),
         floating: !!client.floating,
-        monitor: monitorName(client, workspaces)
+        monitor: monitorName(client, workspaces),
+        hyprId: lotMeta.hyprId,
+        tiledLayout: lotMeta.tiledLayout || "dwindle"
       }, client))
       continue
     }
@@ -145,10 +149,13 @@ function parseStage(clientsJson, workspacesJson, monitorsJson) {
   var wsOut = []
   for (n = 1; n <= 10; n++) {
     if (groups[n] && groups[n].length) {
+      var numMeta = layouts.numbered[n] || {}
       wsOut.push({
         n: n,
         windows: groups[n],
-        monitor: monitorForWorkspace(n, layout, groups[n], workspaces)
+        monitor: monitorForWorkspace(n, layout, groups[n], workspaces),
+        hyprId: numMeta.hyprId != null ? numMeta.hyprId : n,
+        tiledLayout: numMeta.tiledLayout || "dwindle"
       })
     }
   }
@@ -184,6 +191,58 @@ function parkLotName(slug, n) {
 
 function parkSelector(slug, n) {
   return "special:" + parkLotName(slug, n)
+}
+
+function normalizeTiledLayout(value) {
+  var s = String(value || "").toLowerCase()
+  if (s === "scrolling" || s === "scroll") return "scrolling"
+  return "dwindle"
+}
+
+function nextTiledLayout(value) {
+  return normalizeTiledLayout(value) === "scrolling" ? "dwindle" : "scrolling"
+}
+
+function hasHyprWorkspaceId(hyprId) {
+  if (hyprId == null || hyprId === "") return false
+  var n = Number(hyprId)
+  return isFinite(n) && n !== 0
+}
+
+function workspaceLayoutRuleLua(hyprId, layout) {
+  if (!hasHyprWorkspaceId(hyprId)) return ""
+  return "hl.workspace_rule({ workspace = \"" + String(hyprId) + "\", layout = \"" + normalizeTiledLayout(layout) + "\" })\n"
+}
+
+function workspaceLayoutKeyword(hyprId, layout) {
+  if (!hasHyprWorkspaceId(hyprId)) return ""
+  return String(hyprId) + ", layout:" + normalizeTiledLayout(layout)
+}
+
+function workspaceLayoutsDir(home, stateHome) {
+  var xdg = String(stateHome || "").trim()
+  if (xdg) return xdg + "/omarchy/workspace-layouts"
+  return String(home || "") + "/.local/state/omarchy/workspace-layouts"
+}
+
+function workspaceLayoutIndex(workspacesJson) {
+  var list = parseJsonArg(workspacesJson)
+  var numbered = {}
+  var lots = {}
+  var i
+  for (i = 0; i < list.length; i++) {
+    var ws = list[i]
+    if (!ws) continue
+    var meta = {
+      hyprId: ws.id,
+      tiledLayout: normalizeTiledLayout(ws.tiledLayout)
+    }
+    var n = numberedWorkspaceId(ws)
+    if (n) numbered[n] = meta
+    var lot = parseParkedLot({ workspace: ws })
+    if (lot) lots[String(lot.slug) + ":" + String(lot.n)] = meta
+  }
+  return { numbered: numbered, lots: lots }
 }
 
 function moveDispatch(workspaceSelector, address) {
@@ -1013,7 +1072,9 @@ function parkedToStage(parked) {
       title: p.title,
       floating: !!p.floating,
       monitor: p.monitor,
-      workspace: n
+      workspace: n,
+      hyprId: p.hyprId,
+      tiledLayout: normalizeTiledLayout(p.tiledLayout)
     }, p)
     windows.push(win)
     if (n >= 1 && n <= 10) {
@@ -1023,7 +1084,16 @@ function parkedToStage(parked) {
   }
   var wss = []
   for (n = 1; n <= 10; n++) {
-    if (groups[n]) wss.push({ n: n, windows: groups[n] })
+    if (groups[n]) {
+      var first = groups[n][0] || {}
+      wss.push({
+        n: n,
+        windows: groups[n],
+        monitor: first.monitor,
+        hyprId: first.hyprId,
+        tiledLayout: normalizeTiledLayout(first.tiledLayout)
+      })
+    }
   }
   return { workspaces: wss, windows: windows, parked: [], lastWorkspace: wss.length ? wss[0].n : 1 }
 }
@@ -1761,7 +1831,9 @@ function deskTiles(desk, limit) {
       vacant: false,
       panes: layout.panes,
       under: layout.under,
-      aspect: aspectForMonitor(byN[n] && byN[n].monitor, sizes)
+      aspect: aspectForMonitor(byN[n] && byN[n].monitor, sizes),
+      hyprId: byN[n] && byN[n].hyprId,
+      tiledLayout: normalizeTiledLayout(byN[n] && byN[n].tiledLayout)
     })
   }
   return tiles
