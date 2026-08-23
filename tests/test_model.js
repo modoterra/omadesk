@@ -1871,6 +1871,9 @@ test("59 workspace tiledLayout toggle uses Omarchy ids and lua rules", function(
   assert.strictEqual(model.workspaceLayoutTarget({ n: 2 }, "writing", false), "special:omadesk-writing-2")
   assert.strictEqual(model.workspaceLayoutTarget({ n: 1 }, "", true), "1")
   assert.strictEqual(model.workspaceLayoutTarget({ n: 1, vacant: true }, "writing", true), "1")
+  assert.strictEqual(model.workspaceLayoutTarget({ n: 1, hyprId: -83 }, "call", true), "1")
+  assert.strictEqual(model.workspaceLayoutTarget({ n: 4, vacant: true }, "writing", false), "special:omadesk-writing-4")
+  assert.strictEqual(model.workspaceLayoutTarget({ n: 0 }, "writing", true), "")
   assert.strictEqual(model.workspaceLayoutPersistId("3"), "3")
   assert.strictEqual(model.workspaceLayoutPersistId("special:omadesk-call-1"), "omadesk-call-1")
   assert.strictEqual(
