@@ -81,8 +81,6 @@ o.bind("SUPER + D", "Desks", "omarchy-shell shell toggle com.mdtrr.omadesk")
 | s | update desk you are on |
 | r | rename (display name; parking id stays) |
 | e | extras (DND Leave/On/Off, launch missing after reboot, theme Leave or Set) |
-| x | close every window on the highlighted desk (recipe stays) |
-| o | open the recipe in the background (parked lots if you are on another desk) |
 | del | forget, with confirm (parked windows return to 1–10) |
 | esc | close (clear filter first if any) |
 
@@ -94,10 +92,9 @@ omarchy plugin remove com.mdtrr.omadesk
 
 Recipes live in `~/.config/omarchy/omadesk/desks.json`. Forget deletes the
 recipe and brings that desk's parked windows back onto 1–10. A **live** desk
-still has windows (on 1–10 or parked). A **dead** desk is recipe only: `x`
-closes its windows, `o` launches them in the background without switching,
-and switching into it after a reboot also launches the saved windows if
-Launch Missing is on.
+still has windows (on 1–10 or parked). A **dead** desk is recipe only.
+Switching into it after a reboot launches the saved windows if Launch
+Missing is on.
 Theme extras can leave the current theme or run `omarchy theme set`. On the
 desk you are on, that set runs as soon as you pick it. On another desk it
 runs when you switch in.
