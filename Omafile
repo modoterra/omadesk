@@ -1,0 +1,7 @@
+name = "Desks"
+summary = "Named-desk overlay for Omarchy"
+url = "https://github.com/modoterra/omadesk"
+
+[[actions]]
+label = "Unit tests"
+run = ["make", "test"]
