@@ -2664,7 +2664,7 @@ Item {
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
             KeyHint { chord: "enter"; label: "Switch"; sep: true }
-            KeyHint { chord: "s"; label: "Update Here"; sep: true }
+            KeyHint { chord: "s"; label: "Update"; sep: true }
             KeyHint { chord: "n"; label: "New"; sep: true }
             KeyHint { chord: "x"; label: "Close"; sep: true }
             KeyHint { chord: "o"; label: "Open" }
