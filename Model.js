@@ -225,6 +225,23 @@ function workspaceLayoutsDir(home, stateHome) {
   return String(home || "") + "/.local/state/omarchy/workspace-layouts"
 }
 
+function workspaceLayoutApplyArgv(dir, hyprId, layout) {
+  var folder = String(dir || "")
+  if (!folder) return []
+  var lua = workspaceLayoutRuleLua(hyprId, layout).replace(/\n+$/, "")
+  if (!lua) return []
+  return [
+    "bash",
+    "-c",
+    "mkdir -p -- \"$1\" && printf '%s\\n' \"$2\" > \"$3\" && { hyprctl eval \"$2\" >/dev/null 2>&1 || hyprctl keyword workspace \"$4\"; }",
+    "omadesk-layout",
+    folder,
+    lua,
+    folder + "/" + String(hyprId) + ".lua",
+    workspaceLayoutKeyword(hyprId, layout)
+  ]
+}
+
 function workspaceLayoutIndex(workspacesJson) {
   var list = parseJsonArg(workspacesJson)
   var numbered = {}

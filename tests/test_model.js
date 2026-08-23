@@ -1990,6 +1990,48 @@ test("62 space count uses live occupied tiles, not an empty recipe", function() 
   assert.ok(parkedCards.filter((c) => c.id === "test")[0].meta.indexOf("2 Spaces") === 0)
 })
 
+test("63 workspace layout apply argv writes Omarchy lua then evals", function() {
+  const dir = "/home/ada/.local/state/omarchy/workspace-layouts"
+  const argv = model.workspaceLayoutApplyArgv(dir, 2, "scrolling")
+  assert.strictEqual(argv[0], "bash")
+  assert.strictEqual(argv[1], "-c")
+  assert.ok(argv[2].indexOf("mkdir -p --") >= 0)
+  assert.ok(argv[2].indexOf("hyprctl eval") >= 0)
+  assert.ok(argv[2].indexOf("hyprctl keyword workspace") >= 0)
+  assert.strictEqual(argv[4], dir)
+  assert.strictEqual(argv[5], 'hl.workspace_rule({ workspace = "2", layout = "scrolling" })')
+  assert.strictEqual(argv[6], dir + "/2.lua")
+  assert.strictEqual(argv[7], "2, layout:scrolling")
+  const special = model.workspaceLayoutApplyArgv(dir, -89, "dwindle")
+  assert.strictEqual(special[6], dir + "/-89.lua")
+  assert.strictEqual(special[7], "-89, layout:dwindle")
+  same(model.workspaceLayoutApplyArgv(dir, 0, "scrolling"), [])
+  same(model.workspaceLayoutApplyArgv("", 2, "scrolling"), [])
+})
+
+test("64 picker here is only the current desk; parked windows still count as live", function() {
+  const main = { id: "main", name: "Main", extras: model.defaultExtras(), workspaces: [] }
+  const testDesk = {
+    id: "test",
+    name: "Test",
+    extras: model.defaultExtras(),
+    workspaces: [{ n: 1, windows: [{ class: "foot", exec: ["foot"] }] }]
+  }
+  const state = { version: 1, currentId: "main", desks: [main, testDesk] }
+  const stage = {
+    windows: [{ address: "0x1", workspace: 1, class: "foot" }],
+    workspaces: [{ n: 1, windows: [{ address: "0x1", class: "foot" }], hyprId: 1, tiledLayout: "scrolling" }],
+    parked: [{ slug: "test", n: 1, address: "0xa", class: "foot", hyprId: -89, tiledLayout: "dwindle" }]
+  }
+  const cards = model.pickerCards(state, "", stage)
+  const mainCard = cards.filter((c) => c.id === "main")[0]
+  const testCard = cards.filter((c) => c.id === "test")[0]
+  assert.strictEqual(mainCard.here, true)
+  assert.strictEqual(testCard.here, false)
+  assert.strictEqual(mainCard.life, "live")
+  assert.strictEqual(testCard.life, "live")
+})
+
 console.log("ok")
 
 

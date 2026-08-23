@@ -48,10 +48,6 @@ Item {
   property bool extrasPickingTheme: false
   property var themeNames: []
   property string pendingForgetId: ""
-  property string pendingLayoutPath: ""
-  property string pendingLayoutLua: ""
-  property string pendingLayoutEval: ""
-  property string pendingLayoutKeyword: ""
 
   property color accent: Color.accent
   property color urgent: Color.urgent
@@ -1018,9 +1014,7 @@ Item {
 
   function setWorkspaceLayout(tileData, layout) {
     if (root.busy) return
-    if (!tileData || typeof Model.hasHyprWorkspaceId !== "function") return
-    var hyprId = tileData.hyprId
-    if (!Model.hasHyprWorkspaceId(hyprId)) return
+    if (!tileData || typeof Model.workspaceLayoutApplyArgv !== "function") return
     var current = "dwindle"
     if (typeof Model.normalizeTiledLayout === "function") {
       try { current = Model.normalizeTiledLayout(tileData.tiledLayout) } catch (e) { current = "dwindle" }
@@ -1031,21 +1025,12 @@ Item {
     } else if (typeof Model.nextTiledLayout === "function") {
       try { next = Model.nextTiledLayout(current) } catch (e) { next = "scrolling" }
     }
-    if (next === current) return
-    var lua = ""
-    if (typeof Model.workspaceLayoutRuleLua === "function") {
-      try { lua = Model.workspaceLayoutRuleLua(hyprId, next) } catch (e) { lua = "" }
-    }
-    if (!lua) return
-    root.pendingLayoutPath = root.layoutsDir + "/" + String(hyprId) + ".lua"
-    root.pendingLayoutLua = lua
-    root.pendingLayoutEval = lua.replace(/\n+$/, "")
-    root.pendingLayoutKeyword = ""
-    if (typeof Model.workspaceLayoutKeyword === "function") {
-      try { root.pendingLayoutKeyword = Model.workspaceLayoutKeyword(hyprId, next) } catch (e) { root.pendingLayoutKeyword = "" }
-    }
-    layoutMkdirProc.command = ["mkdir", "-p", root.layoutsDir]
-    layoutMkdirProc.running = true
+    var argv = []
+    try { argv = Model.workspaceLayoutApplyArgv(root.layoutsDir, tileData.hyprId, next) || [] } catch (e) { argv = [] }
+    if (!argv.length) return
+    if (layoutApplyProc.running) layoutApplyProc.running = false
+    layoutApplyProc.command = argv
+    layoutApplyProc.running = true
   }
 
   function movePaneOnDesk(address, fromN, toN, slug, here) {
@@ -1677,13 +1662,6 @@ Item {
   }
 
   FileView {
-    id: layoutFile
-    path: ""
-    atomicWrites: true
-    printErrors: false
-  }
-
-  FileView {
     id: desksFile
     path: root.desksPath
     watchChanges: true
@@ -1698,29 +1676,10 @@ Item {
   }
 
   Process {
-    id: layoutMkdirProc
-    onExited: function(code) {
-      if (code === 0 && root.pendingLayoutPath && root.pendingLayoutLua) {
-        layoutFile.path = root.pendingLayoutPath
-        layoutFile.setText(root.pendingLayoutLua)
-      }
-      var evalLua = root.pendingLayoutEval
-      root.pendingLayoutPath = ""
-      root.pendingLayoutLua = ""
-      root.pendingLayoutEval = ""
-      if (!evalLua) return
-      layoutEvalProc.command = ["hyprctl", "eval", evalLua]
-      layoutEvalProc.running = true
-    }
-  }
-
-  Process {
-    id: layoutEvalProc
-    onExited: function(code) {
-      if (code !== 0 && root.pendingLayoutKeyword) {
-        Quickshell.execDetached(["hyprctl", "keyword", "workspace", root.pendingLayoutKeyword])
-      }
-      root.pendingLayoutKeyword = ""
+    id: layoutApplyProc
+    stdout: StdioCollector { waitForEnd: true }
+    stderr: StdioCollector { waitForEnd: true }
+    onExited: function() {
       root.refreshStage()
     }
   }
@@ -1914,6 +1873,7 @@ Item {
     property string deskSlug: ""
     property bool panesDraggable: false
     property bool paneDragging: false
+    property string layoutOverride: ""
     readonly property string paneDragKey: tile.deskSlug ? "omadesk-pane-" + tile.deskSlug : ""
 
     readonly property bool canToggleLayout: {
@@ -1921,9 +1881,10 @@ Item {
       try { return !!Model.hasHyprWorkspaceId(tile.tileData.hyprId) } catch (e) { return false }
     }
     readonly property bool scrollingLayout: {
+      var raw = tile.layoutOverride !== "" ? tile.layoutOverride : (tile.tileData && tile.tileData.tiledLayout)
       var lay = "dwindle"
       if (typeof Model.normalizeTiledLayout === "function") {
-        try { lay = Model.normalizeTiledLayout(tile.tileData && tile.tileData.tiledLayout) } catch (e) { lay = "dwindle" }
+        try { lay = Model.normalizeTiledLayout(raw) } catch (e) { lay = "dwindle" }
       }
       return lay === "scrolling"
     }
@@ -1941,10 +1902,18 @@ Item {
     readonly property bool hasUnder: !tile.vacant && tile.under && tile.under.length > 0
     readonly property int underStrip: tile.hasUnder ? 36 : 0
     readonly property int paneGap: 2
-    readonly property int numberInset: 8
     readonly property int iconPad: 4
+    readonly property int chromePad: Style.space(6)
+    readonly property int chromeGap: Style.space(4)
+    readonly property int headerHeight: Math.max(
+      idLabel.implicitHeight,
+      layoutBtn.visible ? layoutBtn.implicitHeight : 0,
+      Style.space(16)
+    )
+    readonly property int mapWidth: Math.max(1, width - tile.chromePad * 2)
+    readonly property int mapHeight: Math.round(tile.mapWidth / tile.aspect)
 
-    color: tile.vacant ? "transparent" : root.tileFill
+    color: root.tileFill
     borderSpec: Border.controlSpec("normal", root.foreground, root.accent)
     radius: Style.cornerRadius
     readonly property real aspect: {
@@ -1952,288 +1921,313 @@ Item {
       if (isFinite(a) && a >= 0.3 && a <= 5) return a
       return 16 / 9
     }
-    implicitHeight: Math.round(width / tile.aspect) + (tile.hasUnder ? tile.underStrip : 0)
+    implicitHeight: tile.chromePad * 2 + tile.headerHeight + tile.chromeGap + tile.mapHeight + (tile.hasUnder ? tile.underStrip : 0)
     implicitWidth: Style.space(96)
     clip: !tile.paneDragging
 
-    DropArea {
-      id: paneDrop
-      anchors.fill: parent
-      keys: tile.paneDragKey !== "" && tile.panesDraggable ? [tile.paneDragKey] : []
-      z: 1
-      onEntered: function(drag) {
-        var src = drag.source
-        if (src && Number(src.fromWorkspaceN) === Number(tile.tileData && tile.tileData.n))
-          drag.accepted = false
-      }
-      onDropped: function(drop) {
-        var src = drop.source
-        var addr = src && src.paneAddress ? String(src.paneAddress) : ""
-        if (addr)
-          tile.paneDropped(addr, src.fromWorkspaceN)
-        drop.acceptProposedAction()
-      }
-    }
+    onTileDataChanged: tile.layoutOverride = ""
 
-    Rectangle {
-      anchors.fill: parent
-      visible: paneDrop.containsDrag
-      z: 7
-      color: "transparent"
-      border.width: Style.normalBorderWidth + 1
-      border.color: root.accent
-      radius: Style.cornerRadius
-    }
-
-    Item {
-      id: map
-      anchors.fill: parent
-      anchors.margins: 2
-      anchors.bottomMargin: tile.hasUnder ? tile.underStrip + 2 : 2
-      visible: !tile.vacant && tile.panes && tile.panes.length
-      z: 5
-
-      Repeater {
-        model: map.visible ? tile.panes : []
-
-        delegate: Rectangle {
-          id: pane
-          required property var modelData
-          readonly property real px: Number(modelData && modelData.x)
-          readonly property real py: Number(modelData && modelData.y)
-          readonly property real pw: Number(modelData && modelData.w)
-          readonly property real ph: Number(modelData && modelData.h)
-          readonly property string paneAddress: String((modelData && modelData.address) || "")
-          readonly property var fromWorkspaceN: tile.tileData ? tile.tileData.n : null
-          readonly property bool canDragPane: tile.panesDraggable && pane.paneAddress !== "" && tile.paneDragKey !== ""
-
-          x: map.width * (isFinite(px) ? px : 0) + tile.paneGap / 2
-          y: map.height * (isFinite(py) ? py : 0) + tile.paneGap / 2
-          width: Math.max(Style.space(8), map.width * (isFinite(pw) ? pw : 0) - tile.paneGap)
-          height: Math.max(Style.space(8), map.height * (isFinite(ph) ? ph : 0) - tile.paneGap)
-          color: Util.alpha(root.foreground, modelData && modelData.floating ? 0.10 : 0.05)
-          border.width: Style.normalBorderWidth
-          border.color: Style.normalBorderFor(root.foreground, root.accent)
-          radius: Style.cornerRadius
-          z: paneDrag.drag.active ? 20 : 0
-          opacity: paneDrag.drag.active ? 0.92 : 1
-
-          Drag.active: paneDrag.drag.active
-          Drag.hotSpot.x: width / 2
-          Drag.hotSpot.y: height / 2
-          Drag.keys: pane.canDragPane ? [tile.paneDragKey] : []
-          Drag.source: pane
-          Drag.proposedAction: Qt.MoveAction
-
-          function resetPanePos() {
-            pane.x = Qt.binding(function() {
-              return map.width * (isFinite(pane.px) ? pane.px : 0) + tile.paneGap / 2
-            })
-            pane.y = Qt.binding(function() {
-              return map.height * (isFinite(pane.py) ? pane.py : 0) + tile.paneGap / 2
-            })
-          }
-
-          Image {
-            id: paneIcon
-            anchors.centerIn: parent
-            width: Math.max(0, Math.min(Style.space(22), Math.min(parent.width, parent.height) - tile.iconPad * 2))
-            height: width
-            fillMode: Image.PreserveAspectFit
-            asynchronous: true
-            sourceSize.width: width * Screen.devicePixelRatio
-            sourceSize.height: height * Screen.devicePixelRatio
-            source: root.iconSource(modelData)
-            visible: status === Image.Ready
-          }
-
-          Text {
-            visible: paneIcon.status !== Image.Ready
-            anchors.centerIn: parent
-            text: root.iconLetters(modelData)
-            color: root.foreground
-            font.family: root.fontFamily
-            font.pixelSize: Math.max(Style.font.caption, Math.min(parent.width, parent.height) * 0.32)
-            font.weight: Font.DemiBold
-          }
-
-          MouseArea {
-            id: paneDrag
-            anchors.fill: parent
-            enabled: pane.canDragPane
-            hoverEnabled: pane.canDragPane
-            cursorShape: pane.canDragPane ? Qt.OpenHandCursor : Qt.ArrowCursor
-            preventStealing: true
-            drag.target: pane
-            drag.threshold: 10
-            onPressed: function(mouse) {
-              var p = pane.mapToItem(layoutHit, mouse.x, mouse.y)
-              if (layoutHit.visible && p.x >= 0 && p.y >= 0 && p.x <= layoutHit.width && p.y <= layoutHit.height) {
-                mouse.accepted = false
-                return
-              }
-              tile.paneDragging = true
-            }
-            onReleased: {
-              if (pane.Drag.active)
-                pane.Drag.drop()
-              else if (tile.clickable)
-                tile.activated()
-              tile.paneDragging = false
-              pane.resetPanePos()
-            }
-            onCanceled: {
-              tile.paneDragging = false
-              pane.resetPanePos()
-            }
-          }
-        }
-      }
-    }
-
-    Item {
-      visible: tile.hasUnder
+    Column {
       anchors.left: parent.left
       anchors.right: parent.right
-      anchors.bottom: parent.bottom
-      height: tile.underStrip
+      anchors.top: parent.top
+      anchors.margins: tile.chromePad
+      spacing: tile.chromeGap
 
-      Rectangle {
-        id: underRule
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.top: parent.top
-        height: 1
-        color: root.borderSoft
+      Item {
+        width: parent.width
+        height: tile.headerHeight
+
+        MouseArea {
+          anchors.fill: parent
+          anchors.rightMargin: layoutBtn.visible ? layoutBtn.width + Style.space(4) : 0
+          enabled: tile.clickable
+          hoverEnabled: tile.clickable
+          cursorShape: tile.clickable ? Qt.PointingHandCursor : Qt.ArrowCursor
+          onClicked: tile.activated()
+        }
+
+        Text {
+          id: idLabel
+          anchors.left: parent.left
+          anchors.verticalCenter: parent.verticalCenter
+          visible: tile.tileId !== ""
+          text: tile.tileId
+          color: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          font.weight: Font.Medium
+        }
+
+        Button {
+          id: layoutBtn
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
+          z: 2
+          visible: tile.canToggleLayout
+          text: tile.scrollingLayout ? "L" : "D"
+          tooltipText: tile.scrollingLayout ? "Scrolling" : "Dwindle"
+          bordered: true
+          foreground: root.foreground
+          accent: root.accent
+          fontFamily: root.fontFamily
+          fontSize: Style.font.caption
+          horizontalPadding: Style.space(6)
+          verticalPadding: Style.space(2)
+          onClicked: {
+            var next = tile.scrollingLayout ? "dwindle" : "scrolling"
+            tile.layoutOverride = next
+            tile.layoutChosen(next)
+          }
+        }
       }
 
       Item {
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.top: underRule.bottom
-        anchors.bottom: parent.bottom
+        id: inner
+        width: parent.width
+        height: tile.mapHeight
+        clip: !tile.paneDragging
 
-        Row {
-          anchors.left: parent.left
-          anchors.verticalCenter: parent.verticalCenter
-          anchors.leftMargin: 8
-          spacing: 8
+        BorderSurface {
+          anchors.fill: parent
+          color: Util.alpha(root.foreground, 0.04)
+          borderSpec: Border.controlSpec("normal", root.foreground, root.accent)
+          radius: Style.cornerRadius
+        }
+
+        DropArea {
+          id: paneDrop
+          anchors.fill: parent
+          keys: tile.paneDragKey !== "" && tile.panesDraggable ? [tile.paneDragKey] : []
+          z: 1
+          onEntered: function(drag) {
+            var src = drag.source
+            if (src && Number(src.fromWorkspaceN) === Number(tile.tileData && tile.tileData.n))
+              drag.accepted = false
+          }
+          onDropped: function(drop) {
+            var src = drop.source
+            var addr = src && src.paneAddress ? String(src.paneAddress) : ""
+            if (addr)
+              tile.paneDropped(addr, src.fromWorkspaceN)
+            drop.acceptProposedAction()
+          }
+        }
+
+        Rectangle {
+          anchors.fill: parent
+          visible: paneDrop.containsDrag
+          z: 7
+          color: "transparent"
+          border.width: Style.normalBorderWidth + 1
+          border.color: root.accent
+          radius: Style.cornerRadius
+        }
+
+        Item {
+          id: map
+          anchors.fill: parent
+          anchors.margins: 2
+          visible: !tile.vacant && tile.panes && tile.panes.length
+          z: 5
 
           Repeater {
-            model: tile.hasUnder ? tile.under : []
+            model: map.visible ? tile.panes : []
 
-            delegate: Item {
+            delegate: Rectangle {
+              id: pane
               required property var modelData
-              width: 16
-              height: 16
+              readonly property real px: Number(modelData && modelData.x)
+              readonly property real py: Number(modelData && modelData.y)
+              readonly property real pw: Number(modelData && modelData.w)
+              readonly property real ph: Number(modelData && modelData.h)
+              readonly property string paneAddress: String((modelData && modelData.address) || "")
+              readonly property var fromWorkspaceN: tile.tileData ? tile.tileData.n : null
+              readonly property bool canDragPane: tile.panesDraggable && pane.paneAddress !== "" && tile.paneDragKey !== ""
 
-            Image {
-              id: underIcon
-              anchors.fill: parent
-              fillMode: Image.PreserveAspectFit
-              asynchronous: true
-              sourceSize.width: width * Screen.devicePixelRatio
-              sourceSize.height: height * Screen.devicePixelRatio
-              source: root.iconSource(modelData)
-              visible: status === Image.Ready
-              opacity: 0.9
-            }
+              x: map.width * (isFinite(px) ? px : 0) + tile.paneGap / 2
+              y: map.height * (isFinite(py) ? py : 0) + tile.paneGap / 2
+              width: Math.max(Style.space(8), map.width * (isFinite(pw) ? pw : 0) - tile.paneGap)
+              height: Math.max(Style.space(8), map.height * (isFinite(ph) ? ph : 0) - tile.paneGap)
+              color: Util.alpha(root.foreground, modelData && modelData.floating ? 0.10 : 0.05)
+              border.width: Style.normalBorderWidth
+              border.color: Style.normalBorderFor(root.foreground, root.accent)
+              radius: Style.cornerRadius
+              z: paneDrag.drag.active ? 20 : 0
+              opacity: paneDrag.drag.active ? 0.92 : 1
 
-            Text {
-              visible: underIcon.status !== Image.Ready
-              anchors.centerIn: parent
-              text: root.iconLetters(modelData)
-              color: root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              font.weight: Font.DemiBold
+              Drag.active: paneDrag.drag.active
+              Drag.hotSpot.x: width / 2
+              Drag.hotSpot.y: height / 2
+              Drag.keys: pane.canDragPane ? [tile.paneDragKey] : []
+              Drag.source: pane
+              Drag.proposedAction: Qt.MoveAction
+
+              function resetPanePos() {
+                pane.x = Qt.binding(function() {
+                  return map.width * (isFinite(pane.px) ? pane.px : 0) + tile.paneGap / 2
+                })
+                pane.y = Qt.binding(function() {
+                  return map.height * (isFinite(pane.py) ? pane.py : 0) + tile.paneGap / 2
+                })
+              }
+
+              Image {
+                id: paneIcon
+                anchors.centerIn: parent
+                width: Math.max(0, Math.min(Style.space(22), Math.min(parent.width, parent.height) - tile.iconPad * 2))
+                height: width
+                fillMode: Image.PreserveAspectFit
+                asynchronous: true
+                sourceSize.width: width * Screen.devicePixelRatio
+                sourceSize.height: height * Screen.devicePixelRatio
+                source: root.iconSource(modelData)
+                visible: status === Image.Ready
+              }
+
+              Text {
+                visible: paneIcon.status !== Image.Ready
+                anchors.centerIn: parent
+                text: root.iconLetters(modelData)
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Math.max(Style.font.caption, Math.min(parent.width, parent.height) * 0.32)
+                font.weight: Font.DemiBold
+              }
+
+              MouseArea {
+                id: paneDrag
+                anchors.fill: parent
+                enabled: pane.canDragPane
+                hoverEnabled: pane.canDragPane
+                cursorShape: pane.canDragPane ? Qt.OpenHandCursor : Qt.ArrowCursor
+                preventStealing: true
+                drag.target: pane
+                drag.threshold: 10
+                onPressed: tile.paneDragging = true
+                onReleased: {
+                  if (pane.Drag.active)
+                    pane.Drag.drop()
+                  else if (tile.clickable)
+                    tile.activated()
+                  tile.paneDragging = false
+                  pane.resetPanePos()
+                }
+                onCanceled: {
+                  tile.paneDragging = false
+                  pane.resetPanePos()
+                }
+              }
             }
+          }
+        }
+
+        Rectangle {
+          visible: tile.vacant
+          anchors.centerIn: parent
+          z: 3
+          color: root.tileFill
+          border.width: 0
+          radius: 0
+          implicitWidth: emptyLabel.implicitWidth + 16
+          implicitHeight: emptyLabel.implicitHeight + 8
+
+          Text {
+            id: emptyLabel
+            anchors.centerIn: parent
+            text: "Empty"
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+        }
+
+        Text {
+          visible: !tile.vacant && !(tile.panes && tile.panes.length)
+          anchors.fill: parent
+          anchors.margins: Style.space(6)
+          z: 3
+          text: tile.tileLabel
+          color: Util.alpha(root.foreground, 0.78)
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.Wrap
+          maximumLineCount: 2
+          elide: Text.ElideRight
+          verticalAlignment: Text.AlignVCenter
+          horizontalAlignment: Text.AlignHCenter
+        }
+
+        MouseArea {
+          anchors.fill: parent
+          enabled: tile.clickable
+          hoverEnabled: tile.clickable
+          cursorShape: tile.clickable ? Qt.PointingHandCursor : Qt.ArrowCursor
+          z: 2
+          onClicked: tile.activated()
+        }
+      }
+
+      Item {
+        visible: tile.hasUnder
+        width: parent.width
+        height: tile.hasUnder ? tile.underStrip : 0
+
+        Rectangle {
+          id: underRule
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.top: parent.top
+          height: 1
+          color: root.borderSoft
+        }
+
+        Item {
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.top: underRule.bottom
+          anchors.bottom: parent.bottom
+
+          Row {
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.leftMargin: 8
+            spacing: 8
+
+            Repeater {
+              model: tile.hasUnder ? tile.under : []
+
+              delegate: Item {
+                required property var modelData
+                width: 16
+                height: 16
+
+                Image {
+                  id: underIcon
+                  anchors.fill: parent
+                  fillMode: Image.PreserveAspectFit
+                  asynchronous: true
+                  sourceSize.width: width * Screen.devicePixelRatio
+                  sourceSize.height: height * Screen.devicePixelRatio
+                  source: root.iconSource(modelData)
+                  visible: status === Image.Ready
+                  opacity: 0.9
+                }
+
+                Text {
+                  visible: underIcon.status !== Image.Ready
+                  anchors.centerIn: parent
+                  text: root.iconLetters(modelData)
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.weight: Font.DemiBold
+                }
+              }
             }
           }
         }
       }
-    }
-
-    Rectangle {
-      visible: tile.vacant
-      anchors.centerIn: parent
-      color: root.tileFill
-      border.width: 0
-      radius: 0
-      implicitWidth: emptyLabel.implicitWidth + 16
-      implicitHeight: emptyLabel.implicitHeight + 8
-
-      Text {
-        id: emptyLabel
-        anchors.centerIn: parent
-        text: "Empty"
-        color: root.dim
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.caption
-      }
-    }
-
-    Text {
-      visible: !tile.vacant && !(tile.panes && tile.panes.length)
-      anchors.fill: parent
-      anchors.margins: Style.space(6)
-      text: tile.tileLabel
-      color: Util.alpha(root.foreground, 0.78)
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.caption
-      wrapMode: Text.Wrap
-      maximumLineCount: 2
-      elide: Text.ElideRight
-      verticalAlignment: Text.AlignVCenter
-      horizontalAlignment: Text.AlignHCenter
-    }
-
-    Text {
-      visible: tile.tileId !== ""
-      x: tile.numberInset
-      y: tile.numberInset
-      z: 6
-      text: tile.tileId
-      color: root.foreground
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.caption
-      font.weight: Font.Medium
-    }
-
-    Item {
-      id: layoutHit
-      visible: tile.canToggleLayout
-      anchors.right: parent.right
-      anchors.top: parent.top
-      anchors.margins: tile.numberInset
-      z: 100
-      width: layoutBtn.implicitWidth
-      height: layoutBtn.implicitHeight
-
-      Button {
-        id: layoutBtn
-        anchors.fill: parent
-        text: tile.scrollingLayout ? "L" : "D"
-        tooltipText: tile.scrollingLayout ? "Scrolling" : "Dwindle"
-        bordered: true
-        foreground: root.foreground
-        accent: root.accent
-        fontFamily: root.fontFamily
-        fontSize: Style.font.caption
-        horizontalPadding: Style.space(6)
-        verticalPadding: Style.space(2)
-        onClicked: tile.layoutChosen(tile.scrollingLayout ? "dwindle" : "scrolling")
-      }
-    }
-
-    MouseArea {
-      anchors.fill: parent
-      enabled: tile.clickable
-      hoverEnabled: tile.clickable
-      cursorShape: tile.clickable ? Qt.PointingHandCursor : Qt.ArrowCursor
-      z: 2
-      preventStealing: true
-      onClicked: tile.activated()
     }
   }
 
@@ -2488,7 +2482,7 @@ Item {
                     spacing: Style.space(4)
 
                     StatusPill {
-                      visible: !isUnsaved && card.life === "live"
+                      visible: !isUnsaved && isHere
                       label: "LIVE"
                       tone: root.accent
                     }
