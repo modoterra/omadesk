@@ -1950,6 +1950,46 @@ test("61 next empty workspace is the first free n, one vacant tile", function() 
   assert.strictEqual(model.sameDeskMoveDispatch("0xaaa", 1, 4, "writing", true).indexOf('workspace = "4"') >= 0, true)
 })
 
+test("62 space count uses live occupied tiles, not an empty recipe", function() {
+  const main = { id: "main", name: "Main", extras: model.defaultExtras(), workspaces: [] }
+  const testDesk = {
+    id: "test",
+    name: "Test",
+    extras: model.defaultExtras(),
+    workspaces: [{ n: 1, windows: [{ class: "foot", exec: ["foot"] }] }]
+  }
+  const state = { version: 1, currentId: "main", desks: [main, testDesk] }
+  const live = {
+    windows: [
+      { address: "0x1", workspace: 1, class: "foot" },
+      { address: "0x2", workspace: 2, class: "chromium" }
+    ],
+    workspaces: [
+      { n: 1, windows: [{ address: "0x1", class: "foot" }] },
+      { n: 2, windows: [{ address: "0x2", class: "chromium" }] }
+    ]
+  }
+  assert.ok(model.deskSpaceMeta(main).indexOf("0 Spaces") === 0)
+  assert.ok(model.deskSpaceMeta(main, live, "main").indexOf("2 Spaces") === 0)
+  assert.ok(model.deskSpaceMeta(testDesk, live, "main").indexOf("1 Space ·") === 0)
+  const cards = model.pickerCards(state, "", live)
+  const mainCard = cards.filter((c) => c.id === "main")[0]
+  const testCard = cards.filter((c) => c.id === "test")[0]
+  assert.ok(mainCard.meta.indexOf("2 Spaces") === 0)
+  assert.strictEqual(mainCard.tiles.filter((t) => !t.vacant).length, 2)
+  assert.ok(testCard.meta.indexOf("1 Space ·") === 0)
+  const parked = {
+    windows: live.windows,
+    workspaces: live.workspaces,
+    parked: [
+      { slug: "test", n: 1, address: "0xa", class: "foot" },
+      { slug: "test", n: 3, address: "0xb", class: "chromium" }
+    ]
+  }
+  const parkedCards = model.pickerCards(state, "", parked)
+  assert.ok(parkedCards.filter((c) => c.id === "test")[0].meta.indexOf("2 Spaces") === 0)
+})
+
 console.log("ok")
 
 
