@@ -1015,15 +1015,22 @@ Item {
     return null
   }
 
-  function toggleWorkspaceLayout(tileData) {
+  function setWorkspaceLayout(tileData, layout) {
     if (root.busy || layoutMkdirProc.running || layoutEvalProc.running) return
     if (!tileData || typeof Model.hasHyprWorkspaceId !== "function") return
     var hyprId = tileData.hyprId
     if (!Model.hasHyprWorkspaceId(hyprId)) return
-    var next = "scrolling"
-    if (typeof Model.nextTiledLayout === "function") {
-      try { next = Model.nextTiledLayout(tileData.tiledLayout) } catch (e) { next = "scrolling" }
+    var current = "dwindle"
+    if (typeof Model.normalizeTiledLayout === "function") {
+      try { current = Model.normalizeTiledLayout(tileData.tiledLayout) } catch (e) { current = "dwindle" }
     }
+    var next = current
+    if (layout) {
+      try { next = Model.normalizeTiledLayout(layout) } catch (e) { next = current }
+    } else if (typeof Model.nextTiledLayout === "function") {
+      try { next = Model.nextTiledLayout(current) } catch (e) { next = "scrolling" }
+    }
+    if (next === current) return
     var lua = ""
     if (typeof Model.workspaceLayoutRuleLua === "function") {
       try { lua = Model.workspaceLayoutRuleLua(hyprId, next) } catch (e) { lua = "" }
@@ -1883,7 +1890,7 @@ Item {
     property bool compact: false
     property bool clickable: false
     signal activated()
-    signal layoutToggled()
+    signal layoutChosen(string layout)
 
     readonly property bool canToggleLayout: {
       if (!tile.tileData || typeof Model.hasHyprWorkspaceId !== "function") return false
@@ -2086,20 +2093,62 @@ Item {
       font.weight: Font.Medium
     }
 
-    ToggleSwitch {
+    Row {
       visible: tile.canToggleLayout
       anchors.right: parent.right
       anchors.top: parent.top
       anchors.margins: tile.numberInset
       z: 4
-      checked: tile.scrollingLayout
-      interactive: tile.canToggleLayout
-      cursorRing: false
-      trackHeight: 12
-      foreground: root.foreground
-      accent: root.accent
-      busy: layoutMkdirProc.running || layoutEvalProc.running
-      onToggled: tile.layoutToggled()
+      spacing: 3
+      height: layoutSwitch.implicitHeight
+
+      Text {
+        text: "D"
+        color: tile.scrollingLayout ? root.dim : root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        font.bold: true
+        anchors.verticalCenter: parent.verticalCenter
+
+        MouseArea {
+          anchors.fill: parent
+          anchors.margins: -2
+          enabled: tile.canToggleLayout
+          cursorShape: Qt.PointingHandCursor
+          preventStealing: true
+          onClicked: tile.layoutChosen("dwindle")
+        }
+      }
+
+      ToggleSwitch {
+        id: layoutSwitch
+        checked: tile.scrollingLayout
+        interactive: tile.canToggleLayout
+        cursorRing: false
+        trackHeight: 12
+        foreground: root.foreground
+        accent: root.accent
+        busy: layoutMkdirProc.running || layoutEvalProc.running
+        onToggled: tile.layoutChosen(tile.scrollingLayout ? "dwindle" : "scrolling")
+      }
+
+      Text {
+        text: "L"
+        color: tile.scrollingLayout ? root.foreground : root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        font.bold: true
+        anchors.verticalCenter: parent.verticalCenter
+
+        MouseArea {
+          anchors.fill: parent
+          anchors.margins: -2
+          enabled: tile.canToggleLayout
+          cursorShape: Qt.PointingHandCursor
+          preventStealing: true
+          onClicked: tile.layoutChosen("scrolling")
+        }
+      }
     }
 
     MouseArea {
@@ -2394,7 +2443,7 @@ Item {
                       height: implicitHeight
                       tileData: modelData
                       clickable: true
-                      onLayoutToggled: root.toggleWorkspaceLayout(modelData)
+                      onLayoutChosen: function(layout) { root.setWorkspaceLayout(modelData, layout) }
                       onActivated: {
                         root.cursorIndex = cardIndex
                         var n = modelData && modelData.n
@@ -2540,7 +2589,7 @@ Item {
                   width: Math.floor((parent.width - Style.space(6) * (root.tileColumns - 1)) / root.tileColumns)
                   height: implicitHeight
                   tileData: modelData
-                  onLayoutToggled: root.toggleWorkspaceLayout(modelData)
+                  onLayoutChosen: function(layout) { root.setWorkspaceLayout(modelData, layout) }
                 }
               }
             }
