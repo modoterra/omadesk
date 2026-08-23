@@ -2401,7 +2401,8 @@ Item {
           columns: 2
           columnSpacing: root.gridGap
           rowSpacing: root.gridGap
-          uniformCellSizes: true
+          uniformCellWidths: true
+          uniformCellHeights: true
 
           Repeater {
             model: deskGrid.visible ? root.gridCards : []
@@ -2481,7 +2482,8 @@ Item {
                   columns: root.tileColumns
                   columnSpacing: Style.space(6)
                   rowSpacing: Style.space(6)
-                  uniformCellSizes: true
+                  uniformCellWidths: true
+                  uniformCellHeights: true
 
                   Repeater {
                     model: card.tiles || []
@@ -2595,7 +2597,8 @@ Item {
               columns: root.tileColumns
               columnSpacing: Style.space(6)
               rowSpacing: Style.space(6)
-              uniformCellSizes: true
+              uniformCellWidths: true
+              uniformCellHeights: true
 
               Repeater {
                 model: root.mode === "save" ? root.tilesFrom(root.stage, 10) : []
