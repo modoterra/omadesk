@@ -41,7 +41,6 @@ Item {
   property var pendingDnd: ""
   property string switchToId: ""
   property var pendingFocusN: null
-  property bool leavingForFresh: false
   property bool restoringUnsaved: false
   property var pendingDesk: null
   property string pendingTheme: ""
@@ -304,13 +303,6 @@ Item {
   }
 
   readonly property bool showingPicker: root.mode === "picker" || root.mode === "forget" || root.mode === "close"
-  readonly property int newDeskIndex: {
-    var list = root.cards || []
-    for (var i = 0; i < list.length; i++) {
-      if (list[i] && list[i].kind === "new") return i
-    }
-    return -1
-  }
 
   function cardFill(hasCursor, isHere) {
     if (isHere) return root.fillSelected
@@ -497,10 +489,6 @@ Item {
     }
   }
 
-  function newDeskCard() {
-    return { kind: "new", name: "+ New Desk", meta: "Enter Starts Empty", tiles: [] }
-  }
-
   function rebuildCards() {
     var cards = []
     if (typeof Model.pickerCards === "function") {
@@ -525,11 +513,6 @@ Item {
       cards = []
       for (var j = 0; j < desks.length; j++) cards.push(root.deskToCard(desks[j]))
     }
-    var hasNew = false
-    for (var k = 0; k < cards.length; k++) {
-      if (cards[k] && cards[k].kind === "new") hasNew = true
-    }
-    if (!hasNew && !root.filterText) cards.push(root.newDeskCard())
     for (var t = 0; t < cards.length; t++) {
       if (!cards[t] || cards[t].kind === "new" || cards[t].kind === "unsaved") continue
       var src = root.deskById(cards[t].id) || cards[t].desk || cards[t]
@@ -964,40 +947,12 @@ Item {
       return
     }
     var card = root.highlightedCard()
-    if (!card || card.kind === "new") {
-      root.startFresh()
-      return
-    }
+    if (!card || card.kind === "new") return
     if (card.kind === "unsaved") {
       root.switchToUnsaved()
       return
     }
     root.switchTo(root.deskById(card.id) || card.desk)
-  }
-
-  function startFresh() {
-    if (root.busy) return
-    root.busy = true
-    root.targetDesk = null
-    root.pendingDesk = null
-    root.switchToId = ""
-    root.leavingForFresh = true
-    root.restoringUnsaved = false
-    root.refreshStage(function(ok) {
-      if (!ok) {
-        root.busy = false
-        root.leavingForFresh = false
-        return
-      }
-      var windows = (root.stage && root.stage.windows) ? root.stage.windows : []
-      if (root.currentSlug() === "unnamed" && (!windows || !windows.length)) {
-        root.busy = false
-        root.leavingForFresh = false
-        root.dismiss()
-        return
-      }
-      root.runFresh()
-    })
   }
 
   function clickedWorkspaceN(value) {
@@ -1058,7 +1013,6 @@ Item {
     root.targetDesk = null
     root.pendingDesk = null
     root.switchToId = ""
-    root.leavingForFresh = false
     root.restoringUnsaved = true
     root.refreshStage(function(ok) {
       if (!ok) {
@@ -1119,26 +1073,6 @@ Item {
       root.pendingRestore = restoreBatch
       root.startBatch(restoreBatch, "restore")
     })
-  }
-
-  function runFresh() {
-    var plan = null
-    if (typeof Model.freshPlan === "function") {
-      try { plan = Model.freshPlan(root.stage, root.currentSlug()) } catch (e) { plan = null }
-    }
-    if (!plan) {
-      root.busy = false
-      root.leavingForFresh = false
-      return
-    }
-    root.pendingFocusWs = "1"
-    root.pendingDnd = ""
-    root.pendingTheme = ""
-    root.pendingLaunches = []
-    root.pendingDesk = null
-    root.pendingPark = root.batchString(plan.park || plan)
-    root.pendingRestore = ""
-    root.startBatch(root.pendingPark, "park")
   }
 
   function currentSlug() {
@@ -1293,7 +1227,6 @@ Item {
     }
     if (batchProc.running) {
       root.busy = false
-      root.leavingForFresh = false
       root.restoringUnsaved = false
       root.pendingFocusN = null
       return
@@ -1306,7 +1239,6 @@ Item {
     if (code !== 0) {
       root.busy = false
       root.batchPhase = ""
-      root.leavingForFresh = false
       root.restoringUnsaved = false
       root.pendingForgetId = ""
       root.pendingFocusN = null
@@ -1437,7 +1369,7 @@ Item {
     root.launchMissing()
     root.applyDnd()
     root.applyTheme()
-    if (root.leavingForFresh || root.restoringUnsaved) {
+    if (root.restoringUnsaved) {
       var fresh = null
       if (typeof Model.leaveDesk === "function") {
         try { fresh = Model.leaveDesk(root.desksState, Date.now()) } catch (e) { fresh = null }
@@ -1475,7 +1407,6 @@ Item {
     root.pendingDesk = null
     root.switchToId = ""
     root.pendingFocusN = null
-    root.leavingForFresh = false
     root.restoringUnsaved = false
     root.dismiss()
   }
@@ -2553,50 +2484,6 @@ Item {
                   root.activateHighlighted()
                 }
               }
-            }
-          }
-        }
-
-        CursorSurface {
-          visible: deskGrid.visible && root.newDeskIndex >= 0
-          width: parent.width
-          implicitHeight: newDeskBody.implicitHeight + Style.spacing.rowPaddingX
-          hasCursor: root.cursorIndex === root.newDeskIndex
-          foreground: root.foreground
-
-          Column {
-            id: newDeskBody
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.leftMargin: Style.space(10)
-            anchors.rightMargin: Style.space(10)
-            spacing: Style.space(1)
-
-            Text {
-              text: String((root.cardAt(root.newDeskIndex) && root.cardAt(root.newDeskIndex).name) || "+ New Desk")
-              color: root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.body
-            }
-
-            Text {
-              text: String((root.cardAt(root.newDeskIndex) && root.cardAt(root.newDeskIndex).meta) || "Enter Starts Empty")
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-            }
-          }
-
-          MouseArea {
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onContainsMouseChanged: if (containsMouse && root.newDeskIndex >= 0)
-              root.cursorIndex = root.newDeskIndex
-            onClicked: {
-              if (root.newDeskIndex >= 0) root.cursorIndex = root.newDeskIndex
-              root.activateHighlighted()
             }
           }
         }

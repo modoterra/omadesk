@@ -429,12 +429,11 @@ test("20 extras helpers, cards, currentSlug, guessExec", function() {
   assert.strictEqual(cards[0].id, "writing")
   assert.strictEqual(cards[0].here, true)
   assert.strictEqual(cards[0].tiles[0].label, "Zed · charcana")
-  assert.strictEqual(cards.filter((c) => c.kind === "new")[0].name, "+ New Desk")
-  assert.strictEqual(cards.filter((c) => c.kind === "new")[0].meta, "Enter Starts Empty")
+  assert.strictEqual(cards.filter((c) => c.kind === "new").length, 0)
   const filtered = model.pickerCards(model.demoDesks(), "ca")
   assert.strictEqual(filtered[0].name, "Call")
   assert.strictEqual(filtered[0].dnd, true)
-  assert.ok(!filtered.filter((c) => c.kind === "new").length)
+  assert.strictEqual(filtered.filter((c) => c.kind === "new").length, 0)
   const now = Date.parse("2026-08-19T16:40:00Z")
   assert.strictEqual(model.formatDeskMeta({ updatedAt: "2026-08-19T16:40:00Z" }, now), "Now")
   assert.ok(model.formatDeskMeta({ updatedAt: "2026-08-19T13:40:00Z" }, now).indexOf("Ago") >= 0)
@@ -520,7 +519,7 @@ test("23 unsaved card and +new parks to unnamed lots", function() {
   assert.strictEqual(cards[0].name, "Unsaved")
   assert.strictEqual(cards[0].here, true)
   assert.strictEqual(cards[0].meta, "This Room Is Not Saved")
-  assert.ok(cards.filter((c) => c.kind === "new").length === 1)
+  assert.strictEqual(cards.filter((c) => c.kind === "new").length, 0)
   const parkedUnnamed = {
     windows: [],
     parked: [{
