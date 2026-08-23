@@ -281,13 +281,9 @@ Item {
   }
 
   readonly property string headerMetaText: {
-    // Keep a meta line even when the hint is hidden so the hero title
-    // does not jump when a dialog opens. The picker filter hint is a
-    // trailing control so the slash can use the same color as KeyHint.
-    if (root.filterOpen) return "\u00a0"
     if (root.mode === "extras" && root.extrasPickingTheme) return "Pick a theme"
     if (root.mode === "extras") return "Desk extras"
-    return "\u00a0"
+    return ""
   }
 
   readonly property bool showFilterHint: root.mode === "picker" && !root.pickerEmpty && !root.filterOpen
@@ -2139,6 +2135,7 @@ Item {
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
                 font.bold: true
+                font.letterSpacing: 1.2
               }
               Text {
                 text: " TO FILTER"
