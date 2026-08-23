@@ -1016,7 +1016,7 @@ Item {
   }
 
   function setWorkspaceLayout(tileData, layout) {
-    if (root.busy || layoutMkdirProc.running || layoutEvalProc.running) return
+    if (root.busy) return
     if (!tileData || typeof Model.hasHyprWorkspaceId !== "function") return
     var hyprId = tileData.hyprId
     if (!Model.hasHyprWorkspaceId(hyprId)) return
@@ -2065,7 +2065,14 @@ Item {
             preventStealing: true
             drag.target: pane
             drag.threshold: 10
-            onPressed: tile.paneDragging = true
+            onPressed: function(mouse) {
+              var p = pane.mapToItem(layoutHit, mouse.x, mouse.y)
+              if (layoutHit.visible && p.x >= 0 && p.y >= 0 && p.x <= layoutHit.width && p.y <= layoutHit.height) {
+                mouse.accepted = false
+                return
+              }
+              tile.paneDragging = true
+            }
             onReleased: {
               if (pane.Drag.active)
                 pane.Drag.drop()
@@ -2192,22 +2199,30 @@ Item {
       font.weight: Font.Medium
     }
 
-    Button {
+    Item {
+      id: layoutHit
       visible: tile.canToggleLayout
       anchors.right: parent.right
       anchors.top: parent.top
       anchors.margins: tile.numberInset
-      z: 8
-      text: tile.scrollingLayout ? "L" : "D"
-      tooltipText: tile.scrollingLayout ? "Scrolling" : "Dwindle"
-      bordered: true
-      foreground: root.foreground
-      accent: root.accent
-      fontFamily: root.fontFamily
-      fontSize: Style.font.caption
-      horizontalPadding: Style.space(6)
-      verticalPadding: Style.space(2)
-      onClicked: tile.layoutChosen(tile.scrollingLayout ? "dwindle" : "scrolling")
+      z: 100
+      width: layoutBtn.implicitWidth
+      height: layoutBtn.implicitHeight
+
+      Button {
+        id: layoutBtn
+        anchors.fill: parent
+        text: tile.scrollingLayout ? "L" : "D"
+        tooltipText: tile.scrollingLayout ? "Scrolling" : "Dwindle"
+        bordered: true
+        foreground: root.foreground
+        accent: root.accent
+        fontFamily: root.fontFamily
+        fontSize: Style.font.caption
+        horizontalPadding: Style.space(6)
+        verticalPadding: Style.space(2)
+        onClicked: tile.layoutChosen(tile.scrollingLayout ? "dwindle" : "scrolling")
+      }
     }
 
     MouseArea {
