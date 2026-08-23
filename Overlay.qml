@@ -282,13 +282,15 @@ Item {
 
   readonly property string headerMetaText: {
     // Keep a meta line even when the hint is hidden so the hero title
-    // does not jump when a dialog opens.
+    // does not jump when a dialog opens. The picker filter hint is a
+    // trailing control so the slash can use the same color as KeyHint.
     if (root.filterOpen) return "\u00a0"
     if (root.mode === "extras" && root.extrasPickingTheme) return "Pick a theme"
     if (root.mode === "extras") return "Desk extras"
-    if (root.mode === "picker" && !root.pickerEmpty) return "Type / to filter"
     return "\u00a0"
   }
+
+  readonly property bool showFilterHint: root.mode === "picker" && !root.pickerEmpty && !root.filterOpen
 
   readonly property string forgetMessageText: {
     var name = (root.forgetDesk && root.forgetDesk.name) ? String(root.forgetDesk.name) : "this desk"
@@ -2114,6 +2116,38 @@ Item {
               color: root.foreground
               font.family: root.fontFamily
               font.pixelSize: Style.font.display
+            }
+          }
+
+          trailingControl: Component {
+            Row {
+              visible: root.showFilterHint
+              width: visible ? implicitWidth : 0
+              spacing: 0
+
+              Text {
+                text: "TYPE "
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+                font.letterSpacing: 1.2
+              }
+              Text {
+                text: "/"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+              }
+              Text {
+                text: " TO FILTER"
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+                font.letterSpacing: 1.2
+              }
             }
           }
         }
