@@ -1889,12 +1889,12 @@ Item {
       if (!tile.tileData || typeof Model.hasHyprWorkspaceId !== "function") return false
       try { return !!Model.hasHyprWorkspaceId(tile.tileData.hyprId) } catch (e) { return false }
     }
-    readonly property string layoutChipLabel: {
+    readonly property bool scrollingLayout: {
       var lay = "dwindle"
       if (typeof Model.normalizeTiledLayout === "function") {
         try { lay = Model.normalizeTiledLayout(tile.tileData && tile.tileData.tiledLayout) } catch (e) { lay = "dwindle" }
       }
-      return lay === "scrolling" ? "Scroll" : "Dwindle"
+      return lay === "scrolling"
     }
 
     readonly property bool vacant: !!(tile.tileData && tile.tileData.vacant)
@@ -2086,30 +2086,20 @@ Item {
       font.weight: Font.Medium
     }
 
-    Item {
+    ToggleSwitch {
       visible: tile.canToggleLayout
       anchors.right: parent.right
       anchors.top: parent.top
       anchors.margins: tile.numberInset
       z: 4
-      width: layoutPill.implicitWidth
-      height: layoutPill.implicitHeight
-
-      StatusPill {
-        id: layoutPill
-        anchors.centerIn: parent
-        label: tile.layoutChipLabel
-        tone: root.dim
-      }
-
-      MouseArea {
-        anchors.fill: parent
-        enabled: tile.canToggleLayout
-        hoverEnabled: true
-        cursorShape: Qt.PointingHandCursor
-        preventStealing: true
-        onClicked: tile.layoutToggled()
-      }
+      checked: tile.scrollingLayout
+      interactive: tile.canToggleLayout
+      cursorRing: false
+      trackHeight: 12
+      foreground: root.foreground
+      accent: root.accent
+      busy: layoutMkdirProc.running || layoutEvalProc.running
+      onToggled: tile.layoutToggled()
     }
 
     MouseArea {
