@@ -209,14 +209,35 @@ function hasHyprWorkspaceId(hyprId) {
   return isFinite(n) && n !== 0
 }
 
-function workspaceLayoutRuleLua(hyprId, layout) {
-  if (!hasHyprWorkspaceId(hyprId)) return ""
-  return "hl.workspace_rule({ workspace = \"" + String(hyprId) + "\", layout = \"" + normalizeTiledLayout(layout) + "\" })\n"
+function workspaceLayoutTarget(tile, slug, here) {
+  var n = focusWorkspaceN(tile && tile.n != null ? tile.n : tile)
+  if (!n) return ""
+  if (here) {
+    var id = tile && tile.hyprId
+    if (hasHyprWorkspaceId(id) && Number(id) >= 1 && Number(id) <= 10) return String(Number(id))
+    return String(n)
+  }
+  return parkSelector(slug, n)
 }
 
-function workspaceLayoutKeyword(hyprId, layout) {
-  if (!hasHyprWorkspaceId(hyprId)) return ""
-  return String(hyprId) + ", layout:" + normalizeTiledLayout(layout)
+function workspaceLayoutPersistId(target) {
+  var t = String(target || "")
+  if (t.indexOf("special:") === 0) t = t.slice(8)
+  t = t.replace(/[^A-Za-z0-9._-]+/g, "-")
+  t = t.replace(/^-+/, "").replace(/-+$/, "")
+  return t
+}
+
+function workspaceLayoutRuleLua(target, layout) {
+  var ws = safeDispatchToken(target)
+  if (!ws) return ""
+  return "hl.workspace_rule({ workspace = \"" + ws + "\", layout = \"" + normalizeTiledLayout(layout) + "\" })\n"
+}
+
+function workspaceLayoutKeyword(target, layout) {
+  var ws = safeDispatchToken(target)
+  if (!ws) return ""
+  return ws + ", layout:" + normalizeTiledLayout(layout)
 }
 
 function workspaceLayoutsDir(home, stateHome) {
@@ -225,10 +246,11 @@ function workspaceLayoutsDir(home, stateHome) {
   return String(home || "") + "/.local/state/omarchy/workspace-layouts"
 }
 
-function workspaceLayoutApplyArgv(dir, hyprId, layout) {
+function workspaceLayoutApplyArgv(dir, target, layout) {
   var folder = String(dir || "")
-  if (!folder) return []
-  var lua = workspaceLayoutRuleLua(hyprId, layout).replace(/\n+$/, "")
+  var ws = workspaceLayoutPersistId(target)
+  if (!folder || !ws) return []
+  var lua = workspaceLayoutRuleLua(target, layout).replace(/\n+$/, "")
   if (!lua) return []
   return [
     "bash",
@@ -237,8 +259,8 @@ function workspaceLayoutApplyArgv(dir, hyprId, layout) {
     "omadesk-layout",
     folder,
     lua,
-    folder + "/" + String(hyprId) + ".lua",
-    workspaceLayoutKeyword(hyprId, layout)
+    folder + "/" + ws + ".lua",
+    workspaceLayoutKeyword(target, layout)
   ]
 }
 
@@ -1843,7 +1865,13 @@ function deskTiles(desk, limit, includeNextEmpty) {
       var wn = Number(desk.windows[i] && desk.windows[i].workspace)
       if (wn < 1 || wn > cap) continue
       if (!byN[wn] || !isArray(byN[wn].windows)) {
-        byN[wn] = { n: wn, windows: [], monitor: byN[wn] && byN[wn].monitor }
+        byN[wn] = {
+          n: wn,
+          windows: [],
+          monitor: byN[wn] && byN[wn].monitor,
+          hyprId: desk.windows[i] && desk.windows[i].hyprId,
+          tiledLayout: desk.windows[i] && desk.windows[i].tiledLayout
+        }
       }
       byN[wn].windows.push(desk.windows[i])
     }
@@ -1862,8 +1890,8 @@ function deskTiles(desk, limit, includeNextEmpty) {
       panes: layout.panes,
       under: layout.under,
       aspect: aspectForMonitor(byN[n] && byN[n].monitor, sizes),
-      hyprId: byN[n] && byN[n].hyprId,
-      tiledLayout: normalizeTiledLayout(byN[n] && byN[n].tiledLayout)
+      hyprId: (byN[n] && byN[n].hyprId) || (wins[0] && wins[0].hyprId),
+      tiledLayout: normalizeTiledLayout((byN[n] && byN[n].tiledLayout) || (wins[0] && wins[0].tiledLayout))
     })
   }
   if (includeNextEmpty && tiles.length) {

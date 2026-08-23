@@ -976,9 +976,14 @@ Item {
     return null
   }
 
-  function setWorkspaceLayout(tileData, layout) {
+  function setWorkspaceLayout(tileData, layout, slug, here) {
     if (root.busy) return
     if (!tileData || typeof Model.workspaceLayoutApplyArgv !== "function") return
+    var target = ""
+    if (typeof Model.workspaceLayoutTarget === "function") {
+      try { target = Model.workspaceLayoutTarget(tileData, slug, here) || "" } catch (e) { target = "" }
+    }
+    if (!target) return
     var current = "dwindle"
     if (typeof Model.normalizeTiledLayout === "function") {
       try { current = Model.normalizeTiledLayout(tileData.tiledLayout) } catch (e) { current = "dwindle" }
@@ -990,7 +995,7 @@ Item {
       try { next = Model.nextTiledLayout(current) } catch (e) { next = "scrolling" }
     }
     var argv = []
-    try { argv = Model.workspaceLayoutApplyArgv(root.layoutsDir, tileData.hyprId, next) || [] } catch (e) { argv = [] }
+    try { argv = Model.workspaceLayoutApplyArgv(root.layoutsDir, target, next) || [] } catch (e) { argv = [] }
     if (!argv.length) return
     if (layoutApplyProc.running) layoutApplyProc.running = false
     layoutApplyProc.command = argv
@@ -1821,14 +1826,21 @@ Item {
     signal paneDropped(string address, var fromN)
 
     property string deskSlug: ""
+    property bool deskHere: false
     property bool panesDraggable: false
     property bool paneDragging: false
     property string layoutOverride: ""
     readonly property string paneDragKey: tile.deskSlug ? "omadesk-pane-" + tile.deskSlug : ""
 
     readonly property bool canToggleLayout: {
-      if (!tile.tileData || typeof Model.hasHyprWorkspaceId !== "function") return false
-      try { return !!Model.hasHyprWorkspaceId(tile.tileData.hyprId) } catch (e) { return false }
+      if (tile.vacant || !tile.tileData) return false
+      if (typeof Model.workspaceLayoutTarget === "function") {
+        try { return !!Model.workspaceLayoutTarget(tile.tileData, tile.deskSlug, tile.deskHere) } catch (e) {}
+      }
+      if (typeof Model.hasHyprWorkspaceId === "function") {
+        try { return !!Model.hasHyprWorkspaceId(tile.tileData.hyprId) } catch (e) { return false }
+      }
+      return false
     }
     readonly property bool scrollingLayout: {
       var raw = tile.layoutOverride !== "" ? tile.layoutOverride : (tile.tileData && tile.tileData.tiledLayout)
@@ -2481,8 +2493,11 @@ Item {
                       tileData: modelData
                       clickable: true
                       deskSlug: isUnsaved ? "unnamed" : String(card.id || "")
+                      deskHere: isHere
                       panesDraggable: isUnsaved || isHere || card.life === "live"
-                      onLayoutChosen: function(layout) { root.setWorkspaceLayout(modelData, layout) }
+                      onLayoutChosen: function(layout) {
+                        root.setWorkspaceLayout(modelData, layout, isUnsaved ? "unnamed" : String(card.id || ""), isHere)
+                      }
                       onPaneDropped: function(address, fromN) {
                         root.movePaneOnDesk(address, fromN, modelData && modelData.n, isUnsaved ? "unnamed" : String(card.id || ""), isHere)
                       }
@@ -2590,7 +2605,9 @@ Item {
                   Layout.preferredHeight: implicitHeight
                   Layout.minimumHeight: implicitHeight
                   tileData: modelData
-                  onLayoutChosen: function(layout) { root.setWorkspaceLayout(modelData, layout) }
+                  onLayoutChosen: function(layout) {
+                    root.setWorkspaceLayout(modelData, layout, root.currentSlug(), true)
+                  }
                 }
               }
             }

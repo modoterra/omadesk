@@ -1860,10 +1860,19 @@ test("59 workspace tiledLayout toggle uses Omarchy ids and lua rules", function(
     'hl.workspace_rule({ workspace = "3", layout = "scrolling" })\n'
   )
   assert.strictEqual(
-    model.workspaceLayoutRuleLua(-83, "dwindle"),
-    'hl.workspace_rule({ workspace = "-83", layout = "dwindle" })\n'
+    model.workspaceLayoutRuleLua("special:omadesk-call-1", "dwindle"),
+    'hl.workspace_rule({ workspace = "special:omadesk-call-1", layout = "dwindle" })\n'
   )
   assert.strictEqual(model.workspaceLayoutKeyword(3, "scrolling"), "3, layout:scrolling")
+  assert.strictEqual(model.workspaceLayoutKeyword("special:omadesk-call-1", "scrolling"), "special:omadesk-call-1, layout:scrolling")
+  assert.strictEqual(model.workspaceLayoutTarget({ n: 3, hyprId: 3 }, "writing", true), "3")
+  assert.strictEqual(model.workspaceLayoutTarget({ n: 5, hyprId: 5 }, "main", true), "5")
+  assert.strictEqual(model.workspaceLayoutTarget({ n: 1, hyprId: -83 }, "call", false), "special:omadesk-call-1")
+  assert.strictEqual(model.workspaceLayoutTarget({ n: 2 }, "writing", false), "special:omadesk-writing-2")
+  assert.strictEqual(model.workspaceLayoutTarget({ n: 1 }, "", true), "1")
+  assert.strictEqual(model.workspaceLayoutTarget({ n: 1, vacant: true }, "writing", true), "1")
+  assert.strictEqual(model.workspaceLayoutPersistId("3"), "3")
+  assert.strictEqual(model.workspaceLayoutPersistId("special:omadesk-call-1"), "omadesk-call-1")
   assert.strictEqual(
     model.workspaceLayoutsDir("/home/ada", ""),
     "/home/ada/.local/state/omarchy/workspace-layouts"
@@ -2001,10 +2010,10 @@ test("63 workspace layout apply argv writes Omarchy lua then evals", function() 
   assert.strictEqual(argv[5], 'hl.workspace_rule({ workspace = "2", layout = "scrolling" })')
   assert.strictEqual(argv[6], dir + "/2.lua")
   assert.strictEqual(argv[7], "2, layout:scrolling")
-  const special = model.workspaceLayoutApplyArgv(dir, -89, "dwindle")
-  assert.strictEqual(special[6], dir + "/-89.lua")
-  assert.strictEqual(special[7], "-89, layout:dwindle")
-  same(model.workspaceLayoutApplyArgv(dir, 0, "scrolling"), [])
+  const special = model.workspaceLayoutApplyArgv(dir, "special:omadesk-call-1", "dwindle")
+  assert.strictEqual(special[6], dir + "/omadesk-call-1.lua")
+  assert.strictEqual(special[7], "special:omadesk-call-1, layout:dwindle")
+  same(model.workspaceLayoutApplyArgv(dir, "", "scrolling"), [])
   same(model.workspaceLayoutApplyArgv("", 2, "scrolling"), [])
 })
 
