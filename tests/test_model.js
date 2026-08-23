@@ -1921,6 +1921,35 @@ test("60 same-desk pane move: numbered when here, lot when parked", function() {
   assert.strictEqual(panes[1].address, "0xbbb")
 })
 
+test("61 next empty workspace is the first free n, one vacant tile", function() {
+  const stage = model.parseStage(clientsText, workspacesText)
+  assert.strictEqual(model.nextEmptyWorkspaceN(stage), 4)
+  const withEmpty = model.deskTiles(stage, 10, true)
+  assert.strictEqual(withEmpty.length, 4)
+  assert.strictEqual(withEmpty[3].n, 4)
+  assert.strictEqual(withEmpty[3].vacant, true)
+  assert.strictEqual(model.deskTiles(stage).length, 3)
+  const holes = {
+    workspaces: [
+      { n: 1, windows: [{ class: "foot", at: [0, 0], size: [100, 100] }] },
+      { n: 3, windows: [{ class: "chromium", at: [0, 0], size: [100, 100] }] }
+    ]
+  }
+  assert.strictEqual(model.nextEmptyWorkspaceN(holes), 2)
+  const holeTiles = model.deskTiles(holes, 10, true)
+  assert.strictEqual(holeTiles[2].n, 2)
+  assert.strictEqual(holeTiles[2].vacant, true)
+  const packed = { workspaces: [] }
+  var n
+  for (n = 1; n <= 10; n++) {
+    packed.workspaces.push({ n: n, windows: [{ class: "foot", at: [0, 0], size: [40, 40] }] })
+  }
+  assert.strictEqual(model.nextEmptyWorkspaceN(packed), 0)
+  assert.strictEqual(model.deskTiles(packed, 10, true).length, 10)
+  assert.strictEqual(model.nextEmptyWorkspaceN({}), 0)
+  assert.strictEqual(model.sameDeskMoveDispatch("0xaaa", 1, 4, "writing", true).indexOf('workspace = "4"') >= 0, true)
+})
+
 console.log("ok")
 
 

@@ -1047,7 +1047,7 @@ function pickerCards(state, query, stage, nowMs) {
       here: here,
       life: life,
       dnd: !!(desk.extras && desk.extras.dnd === "on"),
-      tiles: deskTiles(deskPreviewSource(desk, stage, st.currentId)),
+      tiles: deskTiles(deskPreviewSource(desk, stage, st.currentId), 10, life === "live" || here),
       meta: deskSpaceMeta(desk) + formatDeskMeta(desk, nowMs, here),
       desk: desk
     })
@@ -1116,7 +1116,7 @@ function unsavedCard(state, stage) {
   if (here && parked.length && !stageWindows(stage).length) here = false
   var parkedStage = parkedToStage(parked)
   if (stage && stage.monitorSizes && parkedStage) parkedStage.monitorSizes = stage.monitorSizes
-  var tiles = here ? previewTiles(stage) : previewTiles(parkedStage)
+  var tiles = here ? deskTiles(stage, 10, true) : deskTiles(parkedStage, 10, true)
   return {
     kind: "unsaved",
     name: "Unsaved",
@@ -1798,7 +1798,7 @@ function workspaceTileN(ws, cap) {
   return 0
 }
 
-function deskTiles(desk, limit) {
+function deskTiles(desk, limit, includeNextEmpty) {
   var cap = Number(limit)
   if (!isFinite(cap) || cap < 1) cap = 10
   if (cap > 10) cap = 10
@@ -1845,7 +1845,41 @@ function deskTiles(desk, limit) {
       tiledLayout: normalizeTiledLayout(byN[n] && byN[n].tiledLayout)
     })
   }
+  if (includeNextEmpty && tiles.length) {
+    var emptyN = nextEmptyWorkspaceN(desk, cap)
+    if (emptyN) {
+      tiles.push({
+        n: emptyN,
+        label: "Empty",
+        vacant: true,
+        panes: [],
+        under: [],
+        aspect: tiles[0].aspect,
+        hyprId: null,
+        tiledLayout: "dwindle"
+      })
+    }
+  }
   return tiles
+}
+
+function nextEmptyWorkspaceN(desk, limit) {
+  var cap = Number(limit)
+  if (!isFinite(cap) || cap < 1) cap = 10
+  if (cap > 10) cap = 10
+  var occupied = {}
+  var tiles = deskTiles(desk, cap)
+  var i
+  var n
+  for (i = 0; i < tiles.length; i++) {
+    n = Number(tiles[i] && tiles[i].n)
+    if (n >= 1 && n <= cap) occupied[n] = true
+  }
+  if (!tiles.length) return 0
+  for (n = 1; n <= cap; n++) {
+    if (!occupied[n]) return n
+  }
+  return 0
 }
 
 function windowGeom(win) {

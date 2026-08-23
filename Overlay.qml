@@ -485,7 +485,7 @@ Item {
     }
     var tiles = root.tilesFrom(desk, 10)
     if (typeof Model.deskPreviewSource === "function" && typeof Model.deskTiles === "function") {
-      try { tiles = Model.deskTiles(Model.deskPreviewSource(desk, root.stage, currentId)) } catch (e) {}
+      try { tiles = Model.deskTiles(Model.deskPreviewSource(desk, root.stage, currentId), 10, life === "live" || here) } catch (e) {}
     }
     return {
       kind: "desk",
@@ -543,7 +543,7 @@ Item {
         try { cards[t].life = Model.deskLife(src, root.stage, currentId) } catch (e) {}
       }
       if (typeof Model.deskPreviewSource === "function" && typeof Model.deskTiles === "function") {
-        try { cards[t].tiles = Model.deskTiles(Model.deskPreviewSource(src, root.stage, currentId)) } catch (e) {}
+        try { cards[t].tiles = Model.deskTiles(Model.deskPreviewSource(src, root.stage, currentId), 10, cards[t].life === "live" || cards[t].here) } catch (e) {}
       } else if (!(cards[t].tiles && cards[t].tiles.length)) {
         cards[t].tiles = root.tilesFrom(src, 10)
       }
