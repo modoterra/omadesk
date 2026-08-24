@@ -17,7 +17,7 @@ Item {
   property string filterText: ""
   property bool filterOpen: false
   property int cursorIndex: 0
-  property var desksState: ({ version: 1, currentId: null, desks: [] })
+  property var desksState: ({ version: 2, currentId: null, desks: [] })
   property var cards: []
   property var gridCards: []
   property var stage: ({})
@@ -29,6 +29,7 @@ Item {
   property var closeDesk: null
   property bool busy: false
   property bool desksDirReady: false
+  property bool desksReadQueued: false
   property bool debugDemo: false
   property string pendingWrite: ""
   property string clientsJson: ""
@@ -77,7 +78,11 @@ Item {
     return (Quickshell.env("HOME") || "") + "/.local/state/omarchy/workspace-layouts"
   }
   readonly property bool dialogOpen: root.mode !== "picker"
+  readonly property int maxDeskCount: Model.maxDeskCount()
+  readonly property int maxDeskNameChars: Model.maxDeskNameChars()
+  readonly property int maxRenderedPanesPerTile: Model.maxRenderedPanesPerTile()
   readonly property int deskCount: (root.desksState && root.desksState.desks && root.desksState.desks.length) ? root.desksState.desks.length : 0
+  readonly property bool canSaveDesk: root.deskCount < root.maxDeskCount
   readonly property bool pickerEmpty: root.mode === "picker" && root.deskCount === 0
   readonly property var mascotLines: [
     "      +---------+",
@@ -96,7 +101,7 @@ Item {
 
   function emptyState() {
     if (typeof Model.emptyState === "function") return Model.emptyState()
-    return { version: 1, currentId: null, desks: [] }
+    return { version: 2, currentId: null, desks: [] }
   }
 
   function open(payloadJson) {
@@ -169,32 +174,43 @@ Item {
   }
 
   function setFilter(text) {
-    root.filterText = String(text || "")
+    root.filterText = String(text || "").slice(0, root.maxDeskNameChars)
     root.cursorIndex = 0
     root.rebuildCards()
   }
 
   function reloadDesksFile() {
-    desksFile.reload()
+    if (desksReadProc.running) {
+      root.desksReadQueued = true
+      return
+    }
+    var argv = Model.boundedFileReadArgv(root.desksPath)
+    if (!argv || !argv.length) {
+      root.applyDesksRaw("")
+      return
+    }
+    desksReadProc.command = argv
+    desksReadProc.running = true
+  }
+
+  function finishDesksRead(code) {
+    var raw = code === 0 ? String(desksReadOut.text || "") : ""
+    if (!Model.isWithinUtf8ByteLimit(raw, Model.maxDesksFileBytes())) raw = ""
+    root.applyDesksRaw(raw)
+    if (root.desksReadQueued) {
+      root.desksReadQueued = false
+      Qt.callLater(function() { root.reloadDesksFile() })
+    }
   }
 
   function applyDesksRaw(raw) {
-    var next = null
+    var next = root.emptyState()
+    var parsed = null
     if (typeof Model.readDesks === "function") {
       try {
-        var parsed = Model.readDesks(raw)
-        if (parsed && parsed.ok === false) next = root.emptyState()
-        else if (parsed && parsed.state) next = parsed.state
-        else next = parsed
-      } catch (e) { next = null }
-    }
-    if (!next) {
-      try {
-        var fallback = JSON.parse(String(raw || "").trim() || "null")
-        if (fallback && typeof fallback === "object") next = fallback
-      } catch (e) {
-        next = null
-      }
+        parsed = Model.readDesks(raw)
+        if (parsed && parsed.ok === true && parsed.state) next = parsed.state
+      } catch (e) { parsed = null }
     }
     if (!next || typeof next !== "object") next = root.emptyState()
     if (!next.desks) next.desks = []
@@ -204,11 +220,7 @@ Item {
     }
     // An older file is upgraded on read. Write it straight back so the stale
     // window recipes leave the disk instead of being re-discarded every load.
-    var wasOlder = false
-    try {
-      var onDisk = JSON.parse(String(raw || "null"))
-      wasOlder = !!(onDisk && Number(onDisk.version) < Number(next.version))
-    } catch (e) { wasOlder = false }
+    var wasOlder = !!(parsed && parsed.migrated)
     root.desksState = next
     root.rebuildCards()
     if (wasOlder) root.persistDesks()
@@ -219,8 +231,8 @@ Item {
     if (typeof Model.writeDesks === "function") {
       try { raw = Model.writeDesks(root.desksState) } catch (e) { raw = "" }
     }
-    if (typeof raw !== "string" || raw === "")
-      raw = JSON.stringify(root.desksState || root.emptyState(), null, 2) + "\n"
+    if (typeof raw !== "string" || raw === "") return
+    if (!Model.isWithinUtf8ByteLimit(raw, Model.maxDesksFileBytes())) return
     root.pendingWrite = raw
     if (!root.desksDirReady) {
       mkdirProc.command = ["mkdir", "-p", root.desksDir]
@@ -231,7 +243,9 @@ Item {
   }
 
   function deskList() {
-    return (root.desksState && Array.isArray(root.desksState.desks)) ? root.desksState.desks : []
+    return (root.desksState && Array.isArray(root.desksState.desks))
+      ? root.desksState.desks.slice(0, root.maxDeskCount)
+      : []
   }
 
   function deskById(id) {
@@ -271,9 +285,7 @@ Item {
   }
 
   readonly property string themeChipText: {
-    var theme = root.extrasDraft && root.extrasDraft.theme ? String(root.extrasDraft.theme) : "leave"
-    if (!theme || theme === "leave") return "Set…"
-    return theme
+    return "Set…"
   }
 
   readonly property string headerTitleText: {
@@ -294,13 +306,13 @@ Item {
   readonly property bool showFilterHint: root.mode === "picker" && !root.pickerEmpty && !root.filterOpen
 
   readonly property string forgetMessageText: {
-    var name = (root.forgetDesk && root.forgetDesk.name) ? String(root.forgetDesk.name) : "this desk"
-    return "Forget " + name + "? Parked windows return to 1–10. Nothing is killed."
+    var name = root.forgetDesk && root.forgetDesk.name ? String(root.forgetDesk.name) : "Unknown desk"
+    return "Forget desk:\n" + name + "\n\nParked windows return to 1–10. Nothing is killed."
   }
 
   readonly property string closeMessageText: {
-    var name = (root.closeDesk && root.closeDesk.name) ? String(root.closeDesk.name) : "this desk"
-    return "Close every window in " + name + "? The recipe stays. Scratchpad is not touched."
+    var name = root.closeDesk && root.closeDesk.name ? String(root.closeDesk.name) : "Unknown desk"
+    return "Close every window in desk:\n" + name + "\n\nThe recipe stays. Scratchpad is not touched."
   }
 
   readonly property bool showingPicker: root.mode === "picker" || root.mode === "forget" || root.mode === "close"
@@ -337,7 +349,7 @@ Item {
 
   function loadThemes() {
     if (themeListProc.running) return
-    themeListProc.command = ["omarchy", "theme", "list"]
+    themeListProc.command = Model.boundedThemeListArgv()
     themeListProc.running = true
   }
 
@@ -390,7 +402,7 @@ Item {
       } catch (e) {}
     }
     if (Array.isArray(source.tiles) && source.tiles.length)
-      return source.tiles.slice(0, limit || source.tiles.length)
+      return source.tiles.slice(0, Math.min(10, limit || source.tiles.length))
 
     var spaces = source.workspaces
     if ((!spaces || !spaces.length) && source.recipe)
@@ -399,14 +411,14 @@ Item {
 
     var out = []
     var i
-    for (i = 0; i < spaces.length; i++) {
+    for (i = 0; i < spaces.length && out.length < 10; i++) {
       var ws = spaces[i] || null
       var clients = (ws && Array.isArray(ws.windows) && ws.windows) || (ws && ws.clients) || []
       if (!Array.isArray(clients) || !clients.length) continue
       var n = ws.n != null ? Number(ws.n) : Number(ws.workspace)
       if (!(n >= 1 && n <= 10)) continue
       var parts = []
-      for (var c = 0; c < clients.length; c++) {
+      for (var c = 0; c < clients.length && c < root.maxRenderedPanesPerTile; c++) {
         var piece = root.tileLabel(clients[c])
         if (piece) parts.push(piece)
       }
@@ -494,6 +506,8 @@ Item {
       cards = []
       for (var j = 0; j < desks.length; j++) cards.push(root.deskToCard(desks[j]))
     }
+    if (cards.length > root.maxDeskCount + 1)
+      cards = cards.slice(0, root.maxDeskCount + 1)
     for (var t = 0; t < cards.length; t++) {
       if (!cards[t] || cards[t].kind === "new" || cards[t].kind === "unsaved") continue
       var src = root.deskById(cards[t].id) || cards[t].desk || cards[t]
@@ -513,7 +527,7 @@ Item {
     }
     root.cards = cards
     var grid = []
-    for (var g = 0; g < cards.length; g++) {
+    for (var g = 0; g < cards.length && grid.length < root.maxDeskCount + 1; g++) {
       if (cards[g] && cards[g].kind !== "new") grid.push({ index: g, card: cards[g] })
     }
     root.gridCards = grid
@@ -634,6 +648,7 @@ Item {
   }
 
   function openSave() {
+    if (!root.canSaveDesk) return
     root.mode = "save"
     root.nameText = ""
     if (nameInput) nameInput.text = ""
@@ -760,15 +775,16 @@ Item {
   }
 
   function confirmSave() {
-    var name = String(nameInput ? nameInput.text : root.nameText).replace(/^\s+|\s+$/g, "")
+    if (!root.canSaveDesk) return
+    var name = String(nameInput ? nameInput.text : root.nameText)
+      .slice(0, root.maxDeskNameChars)
+      .replace(/^\s+|\s+$/g, "")
     if (!name) return
     root.refreshStage(function(ok) {
-      if (!ok) return
+      if (!ok || !root.canSaveDesk) return
       var row = root.newDeskRow(name)
       if (!row || typeof row !== "object") {
         row = { name: name, extras: { dnd: "leave", theme: "leave" }, lastUsed: Date.now() }
-      } else {
-        row.name = name
       }
       var next = null
       if (typeof Model.saveDesk === "function") {
@@ -796,7 +812,9 @@ Item {
   function confirmRename() {
     var desk = root.targetDesk
     if (!desk) { root.cancelDialog(); return }
-    var name = String(nameInput ? nameInput.text : root.nameText).replace(/^\s+|\s+$/g, "")
+    var name = String(nameInput ? nameInput.text : root.nameText)
+      .slice(0, root.maxDeskNameChars)
+      .replace(/^\s+|\s+$/g, "")
     if (!name) return
     var next = null
     if (typeof Model.renameDesk === "function") {
@@ -1372,7 +1390,7 @@ Item {
     root.clientsJson = ""
     root.workspacesJson = ""
     root.monitorsJson = ""
-    clientsProc.command = ["hyprctl", "-j", "clients"]
+    clientsProc.command = Model.boundedHyprctlArgv("clients")
     clientsProc.running = true
   }
 
@@ -1385,25 +1403,14 @@ Item {
 
   function finishStage() {
     var stage = null
-    if (typeof Model.parseStage === "function") {
-      try { stage = Model.parseStage(root.clientsJson, root.workspacesJson, root.monitorsJson) } catch (e) { stage = null }
-      if (!stage) {
-        root.failStage()
-        return
-      }
-    } else {
-      try {
-        var clients = JSON.parse(root.clientsJson || "[]")
-        var workspaces = JSON.parse(root.workspacesJson || "[]")
-        if (!Array.isArray(clients) || !Array.isArray(workspaces)) {
-          root.failStage()
-          return
-        }
-        stage = { clients: clients, workspaces: workspaces }
-      } catch (e) {
-        root.failStage()
-        return
-      }
+    if (typeof Model.parseStage !== "function") {
+      root.failStage()
+      return
+    }
+    try { stage = Model.parseStage(root.clientsJson, root.workspacesJson, root.monitorsJson) } catch (e) { stage = null }
+    if (!stage || stage.valid === false) {
+      root.failStage()
+      return
     }
     root.stage = stage
     root.completeStage(true)
@@ -1528,21 +1535,27 @@ Item {
   FileView {
     id: desksFile
     path: root.desksPath
+    preload: false
     watchChanges: true
     atomicWrites: true
     printErrors: false
-    onLoaded: {
-      root.desksDirReady = true
-      root.applyDesksRaw(text())
+    onFileChanged: root.reloadDesksFile()
+  }
+
+  Process {
+    id: desksReadProc
+    stdout: StdioCollector {
+      id: desksReadOut
+      waitForEnd: true
     }
-    onLoadFailed: root.applyDesksRaw("")
-    onFileChanged: reload()
+    onExited: function(code) {
+      root.desksDirReady = code === 0 || code === 5
+      root.finishDesksRead(code)
+    }
   }
 
   Process {
     id: layoutApplyProc
-    stdout: StdioCollector { waitForEnd: true }
-    stderr: StdioCollector { waitForEnd: true }
     onExited: function() {
       root.refreshStage()
     }
@@ -1581,12 +1594,13 @@ Item {
       waitForEnd: true
     }
     onExited: function(code) {
-      if (code !== 0) {
+      var output = String(clientsOut.text || "")
+      if (code !== 0 || !Model.isWithinUtf8ByteLimit(output, Model.maxCompositorOutputBytes())) {
         root.failStage()
         return
       }
-      root.clientsJson = clientsOut.text || ""
-      workspacesProc.command = ["hyprctl", "-j", "workspaces"]
+      root.clientsJson = output
+      workspacesProc.command = Model.boundedHyprctlArgv("workspaces")
       workspacesProc.running = true
     }
   }
@@ -1598,12 +1612,13 @@ Item {
       waitForEnd: true
     }
     onExited: function(code) {
-      if (code !== 0) {
+      var output = String(workspacesOut.text || "")
+      if (code !== 0 || !Model.isWithinUtf8ByteLimit(output, Model.maxCompositorOutputBytes())) {
         root.failStage()
         return
       }
-      root.workspacesJson = workspacesOut.text || ""
-      monitorsProc.command = ["hyprctl", "-j", "monitors"]
+      root.workspacesJson = output
+      monitorsProc.command = Model.boundedHyprctlArgv("monitors")
       monitorsProc.running = true
     }
   }
@@ -1615,7 +1630,10 @@ Item {
       waitForEnd: true
     }
     onExited: function(code) {
-      root.monitorsJson = code === 0 ? (monitorsOut.text || "[]") : "[]"
+      var output = String(monitorsOut.text || "")
+      root.monitorsJson = code === 0 && Model.isWithinUtf8ByteLimit(output, Model.maxCompositorOutputBytes())
+        ? output
+        : "[]"
       root.finishStage()
     }
   }
@@ -1655,18 +1673,155 @@ Item {
     }
     onExited: function(code) {
       var names = []
-      if (code === 0 && typeof Model.parseThemeList === "function") {
-        try { names = Model.parseThemeList(themeListOut.text || "") } catch (e) { names = [] }
+      var output = String(themeListOut.text || "")
+      if (code === 0 &&
+          Model.isWithinUtf8ByteLimit(output, Model.maxCompositorOutputBytes()) &&
+          typeof Model.parseThemeList === "function") {
+        try { names = Model.parseThemeList(output) } catch (e) { names = [] }
       }
-      if (!Array.isArray(names) || !names.length) {
-        var raw = String(themeListOut.text || "").split(/\n/)
-        names = []
-        for (var i = 0; i < raw.length; i++) {
-          var line = String(raw[i] || "").replace(/^\s+|\s+$/g, "")
-          if (line) names.push(line)
+      root.themeNames = Array.isArray(names) ? names.slice(0, Model.maxThemeNames()) : []
+    }
+  }
+
+  component PlainConfirmDialog: Item {
+    id: dialog
+
+    property bool opened: false
+    property string message: ""
+    property string cancelText: "Cancel"
+    property string confirmText: "Confirm"
+    property int selectedIndex: 1
+    property color background: Color.background
+    property color foreground: Color.foreground
+    property color scrim: Util.alpha(Color.background, 0.7)
+    property color selectedBackground: Util.alpha(Color.foreground, 0.08)
+    property color selectedText: Color.accent
+    property string fontFamily: Style.font.family
+    property int cornerRadius: Style.cornerRadius
+
+    signal canceled()
+    signal confirmed()
+
+    function handleKey(event) {
+      if (!dialog.opened) return false
+      if (event.key === Qt.Key_Escape) {
+        dialog.canceled()
+        return true
+      }
+      if (event.key === Qt.Key_Left || event.key === Qt.Key_Right ||
+          event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
+        dialog.selectedIndex = dialog.selectedIndex === 0 ? 1 : 0
+        return true
+      }
+      if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+        if (dialog.selectedIndex === 0) dialog.canceled()
+        else dialog.confirmed()
+        return true
+      }
+      return false
+    }
+
+    visible: opened
+
+    Rectangle {
+      anchors.fill: parent
+      color: dialog.scrim
+
+      MouseArea {
+        anchors.fill: parent
+        onClicked: dialog.canceled()
+      }
+
+      BorderSurface {
+        id: confirmCard
+        width: Math.min(parent.width - Style.space(32), Style.space(370))
+        height: confirmCard.contentTopInset + confirmCard.contentBottomInset +
+          confirmMessage.implicitHeight + Style.space(20) + Style.space(34)
+        anchors.centerIn: parent
+        color: dialog.background
+        borderSpec: Border.flat(dialog.selectedText, Style.normalBorderWidth)
+        padding: Style.space(18)
+        radius: dialog.cornerRadius
+
+        MouseArea {
+          anchors.fill: parent
+          onClicked: {}
+        }
+
+        Item {
+          anchors.fill: parent
+          anchors.topMargin: confirmCard.contentTopInset
+          anchors.rightMargin: confirmCard.contentRightInset
+          anchors.bottomMargin: confirmCard.contentBottomInset
+          anchors.leftMargin: confirmCard.contentLeftInset
+
+          Text {
+            id: confirmMessage
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            text: dialog.message
+            textFormat: Text.PlainText
+            color: dialog.foreground
+            font.family: dialog.fontFamily
+            font.pixelSize: Style.font.title
+            wrapMode: Text.WordWrap
+          }
+
+          Row {
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            spacing: Style.space(10)
+
+            Repeater {
+              model: [dialog.cancelText, dialog.confirmText]
+
+              BorderSurface {
+                required property int index
+                required property string modelData
+
+                readonly property bool selected: dialog.selectedIndex === index
+                readonly property bool destructive: index === 1
+
+                width: Style.space(88)
+                height: Style.space(34)
+                color: selected
+                  ? (destructive ? Util.alpha(Color.urgent, 0.22) : dialog.selectedBackground)
+                  : "transparent"
+                borderSpec: Border.flat(
+                  destructive
+                    ? (selected ? Color.urgent : Util.alpha(Color.urgent, 0.56))
+                    : (selected ? dialog.selectedText : Util.alpha(dialog.foreground, 0.38)),
+                  Style.normalBorderWidth
+                )
+                radius: 0
+
+                Text {
+                  anchors.centerIn: parent
+                  text: modelData
+                  textFormat: Text.PlainText
+                  color: destructive
+                    ? (selected ? Color.urgent : dialog.foreground)
+                    : (selected ? dialog.selectedText : dialog.foreground)
+                  font.family: dialog.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+
+                MouseArea {
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onEntered: dialog.selectedIndex = index
+                  onClicked: {
+                    if (index === 0) dialog.canceled()
+                    else dialog.confirmed()
+                  }
+                }
+              }
+            }
+          }
         }
       }
-      root.themeNames = names
     }
   }
 
@@ -1679,6 +1834,7 @@ Item {
 
     Text {
       text: chord
+      textFormat: Text.PlainText
       color: root.foreground
       font.family: root.fontFamily
       font.pixelSize: Style.font.caption
@@ -1686,6 +1842,7 @@ Item {
     }
     Text {
       text: " " + label + (sep ? "  ·  " : "")
+      textFormat: Text.PlainText
       color: root.dim
       font.family: root.fontFamily
       font.pixelSize: Style.font.caption
@@ -1707,6 +1864,7 @@ Item {
       id: pillLabel
       anchors.centerIn: parent
       text: pill.label
+      textFormat: Text.PlainText
       color: pill.tone
       font.family: root.fontFamily
       font.pixelSize: Style.font.caption
@@ -1766,8 +1924,12 @@ Item {
       return ""
     }
     readonly property string tileLabel: tile.tileData ? String(tile.tileData.label || (tile.vacant ? "Empty" : "")) : ""
-    readonly property var panes: tile.tileData && tile.tileData.panes ? tile.tileData.panes : []
-    readonly property var under: tile.tileData && tile.tileData.under ? tile.tileData.under : []
+    readonly property var panes: tile.tileData && Array.isArray(tile.tileData.panes)
+      ? tile.tileData.panes.slice(0, root.maxRenderedPanesPerTile)
+      : []
+    readonly property var under: tile.tileData && Array.isArray(tile.tileData.under)
+      ? tile.tileData.under.slice(0, root.maxRenderedPanesPerTile)
+      : []
     readonly property bool hasUnder: !tile.vacant && tile.under && tile.under.length > 0
     readonly property int underStrip: tile.hasUnder ? 36 : 0
     readonly property int paneGap: 2
@@ -1906,6 +2068,7 @@ Item {
           anchors.verticalCenter: parent.verticalCenter
           visible: tile.tileId !== ""
           text: tile.tileId
+          textFormat: Text.PlainText
           color: root.foreground
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
@@ -2041,6 +2204,7 @@ Item {
                 visible: paneIcon.status !== Image.Ready
                 anchors.centerIn: parent
                 text: root.iconLetters(modelData)
+                textFormat: Text.PlainText
                 color: root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Math.max(Style.font.caption, Math.min(parent.width, parent.height) * 0.32)
@@ -2088,6 +2252,7 @@ Item {
             id: emptyLabel
             anchors.centerIn: parent
             text: "Empty"
+            textFormat: Text.PlainText
             color: root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
@@ -2100,6 +2265,7 @@ Item {
           anchors.margins: Style.space(6)
           z: 3
           text: tile.tileLabel
+          textFormat: Text.PlainText
           color: Util.alpha(root.foreground, 0.78)
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
@@ -2170,6 +2336,7 @@ Item {
                   visible: underIcon.status !== Image.Ready
                   anchors.centerIn: parent
                   text: root.iconLetters(modelData)
+                  textFormat: Text.PlainText
                   color: root.foreground
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
@@ -2267,52 +2434,90 @@ Item {
         anchors.rightMargin: card.contentRightInset
         spacing: Style.space(12)
 
-        PanelHero {
+        Item {
+          id: panelHero
           width: parent.width
-          title: root.headerTitleText
-          meta: root.headerMetaText
-          foreground: root.foreground
-          fontFamily: root.fontFamily
+          implicitHeight: Math.max(heroIcon.implicitHeight, heroLabels.implicitHeight, filterHint.implicitHeight)
 
-          iconComponent: Component {
+          Text {
+            id: heroIcon
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            text: "󰍺"
+            textFormat: Text.PlainText
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.display
+          }
+
+          Column {
+            id: heroLabels
+            anchors.left: heroIcon.right
+            anchors.leftMargin: Style.space(14)
+            anchors.right: filterHint.left
+            anchors.rightMargin: Style.space(12)
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(2)
+
             Text {
-              text: "󰍺"
+              width: parent.width
+              text: root.headerTitleText
+              textFormat: Text.PlainText
               color: root.foreground
               font.family: root.fontFamily
-              font.pixelSize: Style.font.display
+              font.pixelSize: Style.font.title
+              font.bold: true
+              elide: Text.ElideRight
+            }
+
+            Text {
+              width: parent.width
+              visible: text !== ""
+              text: root.headerMetaText.toUpperCase()
+              textFormat: Text.PlainText
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+              font.letterSpacing: 1.2
+              elide: Text.ElideRight
             }
           }
 
-          trailingControl: Component {
-            Row {
-              visible: root.showFilterHint
-              width: visible ? implicitWidth : 0
-              spacing: 0
+          Row {
+            id: filterHint
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            visible: root.showFilterHint
+            width: visible ? implicitWidth : 0
+            spacing: 0
 
-              Text {
-                text: "TYPE "
-                color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                font.bold: true
-                font.letterSpacing: 1.2
-              }
-              Text {
-                text: "/"
-                color: root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                font.bold: true
-                font.letterSpacing: 1.2
-              }
-              Text {
-                text: " TO FILTER"
-                color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                font.bold: true
-                font.letterSpacing: 1.2
-              }
+            Text {
+              text: "TYPE "
+              textFormat: Text.PlainText
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+              font.letterSpacing: 1.2
+            }
+            Text {
+              text: "/"
+              textFormat: Text.PlainText
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+              font.letterSpacing: 1.2
+            }
+            Text {
+              text: " TO FILTER"
+              textFormat: Text.PlainText
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+              font.letterSpacing: 1.2
             }
           }
         }
@@ -2349,6 +2554,7 @@ Item {
           Text {
             width: parent.width
             text: "Arrange the windows you want in this room, then save it."
+            textFormat: Text.PlainText
             color: root.foreground
             font.family: root.fontFamily
             font.pixelSize: Style.font.title
@@ -2358,6 +2564,7 @@ Item {
           Text {
             width: parent.width
             text: "A desk is the current 1–10 workspaces, given a name. Switching parks this room and brings the other one back."
+            textFormat: Text.PlainText
             color: root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.body
@@ -2452,6 +2659,7 @@ Item {
                     anchors.rightMargin: Style.space(8)
                     anchors.verticalCenter: parent.verticalCenter
                     text: String(card.name || "")
+                    textFormat: Text.PlainText
                     color: root.foreground
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.title
@@ -2492,7 +2700,7 @@ Item {
                   uniformCellHeights: true
 
                   Repeater {
-                    model: card.tiles || []
+                    model: card.tiles && Array.isArray(card.tiles) ? card.tiles.slice(0, 10) : []
                     delegate: WorkspaceTile {
                       Layout.fillWidth: true
                       Layout.fillHeight: true
@@ -2530,6 +2738,7 @@ Item {
                 Text {
                   width: parent.width
                   text: String(card.meta || "")
+                  textFormat: Text.PlainText
                   color: root.dim
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.bodySmall
@@ -2570,6 +2779,7 @@ Item {
             TextField {
               id: nameInput
               width: parent.width
+              maximumLength: root.maxDeskNameChars
               placeholderText: "Name"
               foreground: root.foreground
               accent: root.accent
@@ -2629,6 +2839,7 @@ Item {
           Text {
             width: parent.width
             text: "Scratchpad stays global and is not stored."
+            textFormat: Text.PlainText
             color: root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall
@@ -2710,11 +2921,23 @@ Item {
                 else root.beginThemePick()
               }
             }
+
+            Text {
+              width: parent.width
+              visible: !!(root.extrasDraft && root.extrasDraft.theme && root.extrasDraft.theme !== "leave")
+              text: visible ? "Selected: " + String(root.extrasDraft.theme) : ""
+              textFormat: Text.PlainText
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              elide: Text.ElideRight
+            }
           }
 
           Text {
             width: parent.width
             text: "Leave means a switch does not touch that setting. Theme changes flash the whole desktop, so they stay off unless you ask."
+            textFormat: Text.PlainText
             color: root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall
@@ -2739,6 +2962,7 @@ Item {
           Text {
             width: parent.width
             text: "A switch will run omarchy theme set. Leave keeps whatever is on the desktop."
+            textFormat: Text.PlainText
             color: root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall
@@ -2770,13 +2994,27 @@ Item {
               Repeater {
                 model: root.themeNames
                 delegate: Button {
+                  id: themeButton
                   required property string modelData
-                  text: modelData
+                  text: ""
+                  implicitWidth: themeText.implicitWidth + horizontalPadding * 2 + Style.space(2)
+                  implicitHeight: themeText.implicitHeight + verticalPadding * 2 + Style.space(2)
                   bordered: true
                   selected: root.extrasDraft.theme === modelData
                   foreground: root.foreground
                   fontFamily: root.fontFamily
                   onClicked: root.pickTheme(modelData)
+
+                  Text {
+                    id: themeText
+                    anchors.centerIn: parent
+                    text: themeButton.modelData
+                    textFormat: Text.PlainText
+                    color: themeButton.selected ? root.accent : root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: themeButton.fontSize
+                    font.bold: themeButton.selected
+                  }
                 }
               }
             }
@@ -2829,7 +3067,7 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             KeyHint { chord: "enter"; label: "Switch"; sep: true }
             KeyHint { chord: "s"; label: "Update"; sep: true }
-            KeyHint { chord: "n"; label: "New" }
+            KeyHint { visible: root.canSaveDesk; chord: "n"; label: "New" }
           }
 
           Row {
@@ -2863,7 +3101,7 @@ Item {
         }
       }
 
-      ConfirmDialog {
+      PlainConfirmDialog {
         id: confirmDialog
         anchors.fill: parent
         opened: root.mode === "forget" || root.mode === "close"

@@ -15,6 +15,7 @@ BarWidget {
   property var currentId: null
   property string currentName: ""
   property int savedDeskCount: 0
+  property bool desksReadQueued: false
   readonly property bool hasDesk: currentName !== ""
   readonly property bool draft: !hasDesk && savedDeskCount > 0
   readonly property string chipText: hasDesk ? "/ " + currentName : (draft ? "Unsaved" : "Desks")
@@ -50,6 +51,30 @@ BarWidget {
     root.savedDeskCount = (state && state.desks && state.desks.length) ? state.desks.length : 0
   }
 
+  function reloadDesksFile() {
+    if (desksReadProc.running) {
+      root.desksReadQueued = true
+      return
+    }
+    var argv = Model.boundedFileReadArgv(root.desksPath)
+    if (!argv || !argv.length) {
+      root.applyDesks("")
+      return
+    }
+    desksReadProc.command = argv
+    desksReadProc.running = true
+  }
+
+  function finishDesksRead(code) {
+    var raw = code === 0 ? String(desksReadOut.text || "") : ""
+    if (!Model.isWithinUtf8ByteLimit(raw, Model.maxDesksFileBytes())) raw = ""
+    root.applyDesks(raw)
+    if (root.desksReadQueued) {
+      root.desksReadQueued = false
+      Qt.callLater(function() { root.reloadDesksFile() })
+    }
+  }
+
   function toggleOverlay() {
     if (root.bar && root.bar.shell && typeof root.bar.shell.toggle === "function") {
       root.bar.shell.toggle(root.moduleName)
@@ -64,27 +89,52 @@ BarWidget {
   implicitHeight: barSize
   visible: true
 
+  Component.onCompleted: root.reloadDesksFile()
+
   FileView {
     id: desksFile
     path: root.desksPath
+    preload: false
     watchChanges: true
     printErrors: false
-    onLoaded: root.applyDesks(text())
-    onLoadFailed: root.applyDesks("")
-    onFileChanged: reload()
+    onFileChanged: root.reloadDesksFile()
+  }
+
+  Process {
+    id: desksReadProc
+    stdout: StdioCollector {
+      id: desksReadOut
+      waitForEnd: true
+    }
+    onExited: function(code) {
+      root.finishDesksRead(code)
+    }
   }
 
   WidgetButton {
     id: button
     anchors.centerIn: parent
     bar: root.bar
-    text: root.chipText
-    tooltipText: hasDesk ? currentName : (draft ? "Unsaved" : "Desks")
+    text: " "
+    labelVisible: false
+    fixedWidth: chipLabel.implicitWidth + scaledHorizontalMargin * 2
+    tooltipText: "Open Desks"
     foreground: hasDesk ? Color.accent : root.barFg
     useActiveColor: false
     dimmed: false
     horizontalMargin: 6
     verticalPadding: 6
     onPressed: root.toggleOverlay()
+
+    Text {
+      id: chipLabel
+      anchors.centerIn: parent
+      text: root.chipText
+      textFormat: Text.PlainText
+      color: root.hasDesk ? Color.accent : root.barFg
+      font.family: button.fontFamily
+      font.pixelSize: button.fontSize
+      renderType: Text.NativeRendering
+    }
   }
 }

@@ -324,6 +324,10 @@ test("17 default extras are dnd leave and theme leave, nothing about launching",
   assert.strictEqual(model.themeAction(extras), null)
   assert.strictEqual(model.themeAction({ theme: "leave" }), null)
   assert.strictEqual(model.themeAction({ theme: "Dazzle Dusk" }), "Dazzle Dusk")
+  const longTheme = "x".repeat(model.maxDeskNameChars() + 1)
+  assert.strictEqual(model.themeAction({ theme: longTheme }), null)
+  assert.strictEqual(model.mergeExtras(extras, { theme: longTheme }).theme, "leave")
+  same(model.parseThemeList(longTheme + "\nAether\n"), ["Aether"])
   same(model.parseThemeList("Aether\nCatppuccin\nDazzle Dusk\n\nTokyo Night\n"), [
     "Aether",
     "Catppuccin",
@@ -2070,6 +2074,197 @@ test("73 a v1 file upgrades to v2, keeping identity and dropping window recipes"
   assert.strictEqual(again.ok, true)
   same(again.state, clone(read.state))
   assert.strictEqual(model.readDesks(JSON.stringify({ version: 3, desks: [] })).ok, false)
+})
+
+test("74 persisted state is byte-bounded and schema-checked before normalization", function() {
+  const fileLimit = model.maxDesksFileBytes()
+  assert.ok(fileLimit >= 1024)
+  assert.strictEqual(model.readDesks(" ".repeat(fileLimit + 1)).ok, false)
+  assert.strictEqual(model.isWithinUtf8ByteLimit("é".repeat(Math.floor(fileLimit / 2) + 1), fileLimit), false)
+
+  const deskLimit = model.maxDeskCount()
+  const tooMany = []
+  for (let i = 0; i <= deskLimit; i++) {
+    tooMany.push({ id: "desk-" + i, name: "Desk " + i })
+  }
+  const countRead = model.readDesks(JSON.stringify({ version: 2, currentId: null, desks: tooMany }))
+  assert.strictEqual(countRead.ok, false)
+  assert.ok(/desk count/i.test(countRead.error))
+
+  assert.strictEqual(model.readDesks(JSON.stringify({ version: "2", currentId: null, desks: [] })).ok, false)
+  assert.strictEqual(model.readDesks(JSON.stringify({ version: 2, currentId: null, desks: {} })).ok, false)
+  assert.strictEqual(model.readDesks(JSON.stringify({
+    version: 2,
+    currentId: null,
+    desks: [{ id: "bad", name: { markup: "<img src=x>" } }]
+  })).ok, false)
+  assert.strictEqual(model.readDesks(JSON.stringify({
+    version: 2,
+    currentId: null,
+    desks: [{ id: "bad", name: "x".repeat(model.maxDeskNameChars() + 1) }]
+  })).ok, false)
+  assert.strictEqual(model.readDesks(JSON.stringify({
+    version: 2,
+    currentId: null,
+    desks: [{ id: "bad", name: "Bad", layout: new Array(11).fill({ n: 1, monitor: "DP-1" }) }]
+  })).ok, false)
+  assert.strictEqual(model.readDesks(
+    "{\"version\":2,\"currentId\":null,\"desks\":[],\"constructor\":{}}"
+  ).ok, false)
+  assert.strictEqual(model.readDesks(JSON.stringify({
+    version: 2,
+    currentId: null,
+    desks: [{ id: "not_canonical", name: "Bad" }]
+  })).ok, false)
+  assert.strictEqual(model.readDesks(JSON.stringify({
+    version: 2,
+    currentId: null,
+    desks: [{ id: "omadesk-shadow", name: "Bad" }]
+  })).ok, false)
+  assert.strictEqual(model.readDesks(JSON.stringify({
+    version: 2,
+    currentId: null,
+    desks: [{ id: "unnamed", name: "Bad" }]
+  })).ok, false)
+  assert.strictEqual(model.readDesks(JSON.stringify({
+    version: 1,
+    currentId: "unnamed",
+    desks: []
+  })).ok, true)
+  assert.strictEqual(model.readDesks(JSON.stringify({
+    version: 1,
+    currentId: null,
+    desks: [{
+      id: "legacy",
+      name: "Legacy",
+      monitorSizes: { "DP-1": { w: 2560, h: 1440 } },
+      workspaces: [{ n: 1, monitor: "DP-1", windows: [{ class: "foot", exec: ["foot"] }] }]
+    }]
+  })).ok, true)
+  assert.strictEqual(model.readDesks(JSON.stringify({
+    version: 1,
+    currentId: null,
+    desks: [{
+      id: "legacy",
+      name: "Legacy",
+      workspaces: [{ n: 1, windows: [{ class: "foot", injected: "<b>bad</b>" }] }]
+    }]
+  })).ok, false)
+
+  const direct = model.normalizeState({ version: 2, currentId: null, desks: tooMany })
+  assert.strictEqual(direct.desks.length, deskLimit)
+  direct.desks.forEach((desk) => {
+    assert.ok(desk.id.length <= model.maxDeskIdChars())
+    assert.ok(desk.name.length <= model.maxDeskNameChars())
+  })
+  const full = { version: 2, currentId: null, desks: direct.desks }
+  assert.strictEqual(model.saveDesk(full, { id: "extra", name: "Extra" }), null)
+})
+
+test("75 compositor parsing and rendered models have hard cardinality and string caps", function() {
+  const tooManyClients = []
+  for (let i = 0; i <= model.maxStageClients(); i++) {
+    tooManyClients.push({
+      address: "0x" + i.toString(16),
+      class: "foot",
+      title: "terminal",
+      workspace: { id: 1, name: "1" },
+      at: [i, 0],
+      size: [100, 100]
+    })
+  }
+  const rejected = model.parseStage(JSON.stringify(tooManyClients), "[]", "[]")
+  assert.strictEqual(rejected.valid, false)
+  same(rejected.windows, [])
+  const outputLimit = model.maxCompositorOutputBytes()
+  assert.strictEqual(model.parseStage(" ".repeat(outputLimit + 1), "[]", "[]").valid, false)
+  same(model.parseThemeList("x".repeat(outputLimit + 1)), [])
+
+  const longText = "x".repeat(model.maxCompositorTextChars() * 2)
+  const bounded = model.parseStage(JSON.stringify([{
+    address: "0xabc",
+    class: longText,
+    initialClass: longText,
+    title: longText,
+    workspace: { id: 1, name: "1" },
+    at: [0, 0],
+    size: [100, 100]
+  }]), JSON.stringify([{ id: 1, name: "1", monitor: "DP-1" }]), "[]")
+  assert.strictEqual(bounded.valid, true)
+  assert.strictEqual(bounded.windows.length, 1)
+  assert.ok(bounded.windows[0].class.length <= model.maxCompositorTextChars())
+  assert.ok(bounded.windows[0].initialClass.length <= model.maxCompositorTextChars())
+  assert.ok(bounded.windows[0].title.length <= model.maxCompositorTextChars())
+
+  const manyWindows = []
+  for (let i = 0; i < model.maxRenderedPanesPerTile() + 10; i++) {
+    manyWindows.push({
+      address: "0x" + i.toString(16),
+      class: "foot",
+      at: [i * 10, 0],
+      size: [10, 100]
+    })
+  }
+  assert.strictEqual(model.windowPanes(manyWindows).length, model.maxRenderedPanesPerTile())
+  const covered = manyWindows.concat([{
+    address: "0xtop",
+    class: "chromium",
+    fullscreen: 2,
+    at: [0, 0],
+    size: [1000, 1000]
+  }])
+  assert.ok(model.windowsUnder(covered).length <= model.maxRenderedPanesPerTile())
+
+  const rawState = { version: 2, currentId: null, desks: [] }
+  for (let i = 0; i < model.maxDeskCount() + 10; i++) {
+    rawState.desks.push({ id: "desk-" + i, name: "Desk " + i })
+  }
+  assert.ok(model.pickerCards(rawState, "").length <= model.maxDeskCount() + 1)
+  assert.ok(model.parseThemeList(new Array(model.maxThemeNames() + 20).fill("Theme").map((v, i) => v + i).join("\n")).length <= model.maxThemeNames())
+})
+
+test("76 file and compositor collectors are bounded at the command boundary", function() {
+  const readArgv = model.boundedFileReadArgv("/tmp/desks.json")
+  assert.strictEqual(readArgv[0], "bash")
+  assert.ok(readArgv.join("\n").indexOf("stat -Lc %s") >= 0)
+  assert.ok(readArgv.join("\n").indexOf("head -c") >= 0)
+  assert.strictEqual(readArgv[readArgv.length - 1], String(model.maxDesksFileBytes()))
+
+  for (const query of ["clients", "workspaces", "monitors"]) {
+    const argv = model.boundedHyprctlArgv(query)
+    assert.strictEqual(argv[0], "bash")
+    assert.ok(argv.join("\n").indexOf("hyprctl -j") >= 0)
+    assert.ok(argv.join("\n").indexOf("head -c") >= 0)
+    assert.ok(argv.indexOf(query) >= 0)
+    assert.strictEqual(argv[argv.length - 1], String(model.maxCompositorOutputBytes() + 1))
+  }
+  same(model.boundedHyprctlArgv("dispatch"), [])
+})
+
+test("77 QML avoids unbounded FileView reads and forces local Text to plain text", function() {
+  const overlay = fs.readFileSync(path.join(__dirname, "..", "Overlay.qml"), "utf8")
+  const bar = fs.readFileSync(path.join(__dirname, "..", "BarWidget.qml"), "utf8")
+
+  assert.ok(overlay.indexOf("Model.boundedFileReadArgv") >= 0)
+  assert.ok(bar.indexOf("Model.boundedFileReadArgv") >= 0)
+  assert.ok(overlay.indexOf("Model.boundedHyprctlArgv") >= 0)
+  assert.ok(overlay.indexOf("component PlainConfirmDialog: Item") >= 0)
+  assert.strictEqual(/\n\s*ConfirmDialog\s*\{/.test(overlay), false)
+  assert.ok(overlay.indexOf("preload: false") >= 0)
+  assert.ok(bar.indexOf("preload: false") >= 0)
+  assert.strictEqual(overlay.indexOf("root.applyDesksRaw(text())"), -1)
+  assert.strictEqual(bar.indexOf("root.applyDesks(text())"), -1)
+  const widgetStart = bar.indexOf("WidgetButton {")
+  const widgetChildText = bar.indexOf("Text {", widgetStart)
+  assert.ok(widgetStart >= 0 && widgetChildText > widgetStart)
+  assert.strictEqual(bar.slice(widgetStart, widgetChildText).indexOf("text: root.chipText"), -1)
+
+  for (const [name, source] of [["Overlay.qml", overlay], ["BarWidget.qml", bar]]) {
+    const textItems = (source.match(/\bText\s*\{/g) || []).length
+    const plainItems = (source.match(/textFormat:\s*Text\.PlainText/g) || []).length
+    assert.ok(textItems > 0, name + " should render at least one local Text item")
+    assert.strictEqual(plainItems, textItems, name + " has a Text item using AutoText")
+  }
 })
 
 console.log("ok")

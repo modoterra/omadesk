@@ -6,6 +6,70 @@
 // parked in that desk's lots. desks.json only names desks and keeps their
 // preferences, so stored state cannot drift away from the compositor.
 
+var MAX_DESKS_FILE_BYTES_VALUE = 256 * 1024
+var MAX_COMPOSITOR_OUTPUT_BYTES_VALUE = 1024 * 1024
+var MAX_DESK_COUNT_VALUE = 64
+var MAX_DESK_ID_CHARS_VALUE = 96
+var MAX_DESK_NAME_CHARS_VALUE = 128
+var MAX_COMPOSITOR_TEXT_CHARS_VALUE = 512
+var MAX_MONITOR_NAME_CHARS_VALUE = 128
+var MAX_WORKSPACE_NAME_CHARS_VALUE = 192
+var MAX_ADDRESS_CHARS_VALUE = 128
+var MAX_TIMESTAMP_CHARS_VALUE = 64
+var MAX_STAGE_CLIENTS_VALUE = 512
+var MAX_STAGE_WORKSPACES_VALUE = 1024
+var MAX_STAGE_MONITORS_VALUE = 32
+var MAX_RENDERED_PANES_PER_TILE_VALUE = 32
+var MAX_THEME_NAMES_VALUE = 128
+var MAX_LAYOUT_ROWS_VALUE = 10
+var MAX_LEGACY_ARGV_VALUE = 64
+var MAX_LEGACY_TEXT_CHARS_VALUE = 2048
+var MAX_NUMERIC_MAGNITUDE_VALUE = 1000000000
+
+function maxDesksFileBytes() {
+  return MAX_DESKS_FILE_BYTES_VALUE
+}
+
+function maxCompositorOutputBytes() {
+  return MAX_COMPOSITOR_OUTPUT_BYTES_VALUE
+}
+
+function maxDeskCount() {
+  return MAX_DESK_COUNT_VALUE
+}
+
+function maxDeskIdChars() {
+  return MAX_DESK_ID_CHARS_VALUE
+}
+
+function maxDeskNameChars() {
+  return MAX_DESK_NAME_CHARS_VALUE
+}
+
+function maxCompositorTextChars() {
+  return MAX_COMPOSITOR_TEXT_CHARS_VALUE
+}
+
+function maxStageClients() {
+  return MAX_STAGE_CLIENTS_VALUE
+}
+
+function maxStageWorkspaces() {
+  return MAX_STAGE_WORKSPACES_VALUE
+}
+
+function maxStageMonitors() {
+  return MAX_STAGE_MONITORS_VALUE
+}
+
+function maxRenderedPanesPerTile() {
+  return MAX_RENDERED_PANES_PER_TILE_VALUE
+}
+
+function maxThemeNames() {
+  return MAX_THEME_NAMES_VALUE
+}
+
 function emptyState() {
   return { version: 2, currentId: null, desks: [] }
 }
@@ -18,13 +82,79 @@ function desksPath(home) {
   return String(home || "") + "/.config/omarchy/omadesk/desks.json"
 }
 
+function isWithinUtf8ByteLimit(value, limit) {
+  var text = typeof value === "string" ? value : String(value == null ? "" : value)
+  var cap = Number(limit)
+  if (!isFinite(cap) || cap < 0) return false
+  var bytes = 0
+  var i
+  for (i = 0; i < text.length; i++) {
+    var code = text.charCodeAt(i)
+    if (code <= 0x7f) bytes += 1
+    else if (code <= 0x7ff) bytes += 2
+    else if (code >= 0xd800 && code <= 0xdbff && i + 1 < text.length) {
+      var next = text.charCodeAt(i + 1)
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        bytes += 4
+        i += 1
+      } else {
+        bytes += 3
+      }
+    } else {
+      bytes += 3
+    }
+    if (bytes > cap) return false
+  }
+  return true
+}
+
+function boundedFileReadArgv(path) {
+  var file = String(path || "")
+  if (!file) return []
+  return [
+    "bash",
+    "-c",
+    "file=$1; limit=$2; [ -e \"$file\" ] || exit 3; [ -f \"$file\" ] || exit 4; size=$(stat -Lc %s -- \"$file\") || exit 4; [ \"$size\" -le \"$limit\" ] || exit 5; exec head -c \"$((limit + 1))\" -- \"$file\"",
+    "omadesk-read",
+    file,
+    String(MAX_DESKS_FILE_BYTES_VALUE)
+  ]
+}
+
+function boundedHyprctlArgv(query) {
+  var name = String(query || "")
+  if (name !== "clients" && name !== "workspaces" && name !== "monitors") return []
+  return [
+    "bash",
+    "-o",
+    "pipefail",
+    "-c",
+    "hyprctl -j \"$1\" 2>/dev/null | head -c \"$2\"",
+    "omadesk-hyprctl",
+    name,
+    String(MAX_COMPOSITOR_OUTPUT_BYTES_VALUE + 1)
+  ]
+}
+
+function boundedThemeListArgv() {
+  return [
+    "bash",
+    "-o",
+    "pipefail",
+    "-c",
+    "omarchy theme list 2>/dev/null | head -c \"$1\"",
+    "omadesk-themes",
+    String(MAX_COMPOSITOR_OUTPUT_BYTES_VALUE + 1)
+  ]
+}
+
 function normalizeQuery(raw) {
-  return String(raw || "").replace(/\s+/g, " ").trim()
+  return boundedText(raw, MAX_DESK_NAME_CHARS_VALUE, "").replace(/\s+/g, " ").trim()
 }
 
 function scoreText(query, text) {
-  var needle = String(query || "").toLowerCase()
-  var hay = String(text || "").toLowerCase()
+  var needle = boundedText(query, MAX_DESK_NAME_CHARS_VALUE, "").toLowerCase()
+  var hay = boundedText(text, MAX_DESK_NAME_CHARS_VALUE, "").toLowerCase()
   if (needle === "") return 1
   if (hay === needle) return 100
   if (hay.indexOf(needle) === 0) return 80
@@ -37,11 +167,11 @@ function filterDesks(desks, query) {
   var list = isArray(desks) ? desks : []
   var scored = []
   var i
-  for (i = 0; i < list.length; i++) {
+  for (i = 0; i < list.length && i < MAX_DESK_COUNT_VALUE; i++) {
     var desk = list[i]
     var score = scoreText(q, desk && desk.name)
     if (q !== "" && score <= 0) continue
-    scored.push({ desk: desk, score: score, name: desk && desk.name ? String(desk.name) : "" })
+    scored.push({ desk: desk, score: score, name: boundedText(desk && desk.name, MAX_DESK_NAME_CHARS_VALUE, "") })
   }
   if (q !== "") {
     scored.sort(function(a, b) {
@@ -104,12 +234,36 @@ function jumpCursor(nOrIndex, count, maybeN) {
   return current
 }
 
+function emptyStage(valid) {
+  return {
+    valid: valid !== false,
+    workspaces: [],
+    windows: [],
+    parked: [],
+    layout: [],
+    monitors: [],
+    monitorSizes: {},
+    lastWorkspace: null
+  }
+}
+
 function parseStage(clientsJson, workspacesJson, monitorsJson) {
-  var clients = parseJsonArg(clientsJson)
-  var workspaces = parseJsonArg(workspacesJson)
-  var layout = parseLayout(monitorsJson, workspaces)
+  if (typeof clientsJson === "string" &&
+      !isWithinUtf8ByteLimit(clientsJson, MAX_COMPOSITOR_OUTPUT_BYTES_VALUE)) return emptyStage(false)
+  if (typeof workspacesJson === "string" &&
+      !isWithinUtf8ByteLimit(workspacesJson, MAX_COMPOSITOR_OUTPUT_BYTES_VALUE)) return emptyStage(false)
+  if (typeof monitorsJson === "string" &&
+      !isWithinUtf8ByteLimit(monitorsJson, MAX_COMPOSITOR_OUTPUT_BYTES_VALUE)) return emptyStage(false)
+  var clientsResult = parseJsonList(clientsJson, MAX_STAGE_CLIENTS_VALUE)
+  var workspacesResult = parseJsonList(workspacesJson, MAX_STAGE_WORKSPACES_VALUE)
+  var monitorsResult = parseJsonList(monitorsJson, MAX_STAGE_MONITORS_VALUE)
+  if (!clientsResult.ok || !workspacesResult.ok || !monitorsResult.ok) return emptyStage(false)
+  var clients = clientsResult.list
+  var workspaces = workspacesResult.list
+  var monitorsInput = monitorsResult.list
+  var layout = parseLayout(monitorsInput, workspaces)
   var layouts = workspaceLayoutIndex(workspaces)
-  var monitors = connectedMonitorNames(monitorsJson, workspaces)
+  var monitors = connectedMonitorNames(monitorsInput, workspaces)
   var groups = {}
   var windows = []
   var parked = []
@@ -122,10 +276,10 @@ function parseStage(clientsJson, workspacesJson, monitorsJson) {
       parked.push(copyGeom({
         slug: lot.slug,
         n: lot.n,
-        address: String(client.address || ""),
-        class: String(client.class || ""),
-        initialClass: String(client.initialClass || ""),
-        title: String(client.title || ""),
+        address: boundedToken(client.address, MAX_ADDRESS_CHARS_VALUE),
+        class: boundedText(client.class, MAX_COMPOSITOR_TEXT_CHARS_VALUE, ""),
+        initialClass: boundedText(client.initialClass, MAX_COMPOSITOR_TEXT_CHARS_VALUE, ""),
+        title: boundedText(client.title, MAX_COMPOSITOR_TEXT_CHARS_VALUE, ""),
         floating: !!client.floating,
         monitor: monitorName(client, workspaces),
         hyprId: lotMeta.hyprId,
@@ -136,10 +290,10 @@ function parseStage(clientsJson, workspacesJson, monitorsJson) {
     var n = clientWorkspaceN(client)
     if (n < 1 || n > 10) continue
     var win = copyGeom({
-      address: String(client.address || ""),
-      class: String(client.class || ""),
-      initialClass: String(client.initialClass || ""),
-      title: String(client.title || ""),
+      address: boundedToken(client.address, MAX_ADDRESS_CHARS_VALUE),
+      class: boundedText(client.class, MAX_COMPOSITOR_TEXT_CHARS_VALUE, ""),
+      initialClass: boundedText(client.initialClass, MAX_COMPOSITOR_TEXT_CHARS_VALUE, ""),
+      title: boundedText(client.title, MAX_COMPOSITOR_TEXT_CHARS_VALUE, ""),
       floating: !!client.floating,
       monitor: monitorName(client, workspaces),
       workspace: n
@@ -162,23 +316,28 @@ function parseStage(clientsJson, workspacesJson, monitorsJson) {
     }
   }
   return {
+    valid: true,
     workspaces: wsOut,
     windows: windows,
     parked: parked,
     layout: layout,
     monitors: monitors,
-    monitorSizes: parseMonitorSizes(monitorsJson),
+    monitorSizes: parseMonitorSizes(monitorsInput),
     lastWorkspace: pickLastWorkspace(workspaces, wsOut, layout)
   }
 }
 
 function sanitizeSlug(name) {
-  var s = String(name || "").toLowerCase()
+  var s = boundedText(name, MAX_DESK_NAME_CHARS_VALUE, "").toLowerCase()
   if (s.indexOf("omadesk-") === 0) s = s.slice(8)
   s = s.replace(/[^a-z0-9]+/g, "-")
   s = s.replace(/-+/g, "-")
   s = s.replace(/^-/, "")
   s = s.replace(/-$/, "")
+  if (s === "") return "unnamed"
+  if (s.length > MAX_DESK_ID_CHARS_VALUE) {
+    s = s.slice(0, MAX_DESK_ID_CHARS_VALUE).replace(/-+$/, "")
+  }
   if (s === "") return "unnamed"
   return s
 }
@@ -227,7 +386,8 @@ function workspaceLayoutTarget(tile, slug, here) {
 }
 
 function workspaceLayoutPersistId(target) {
-  var t = String(target || "")
+  var t = boundedToken(target, MAX_WORKSPACE_NAME_CHARS_VALUE)
+  if (!t) return ""
   if (t.indexOf("special:") === 0) t = t.slice(8)
   if (/^[0-9]+$/.test(t)) return t
   if (/^-/.test(t)) return ""
@@ -286,7 +446,7 @@ function workspaceLayoutApplyArgv(dir, target, layout) {
 }
 
 function workspaceLayoutIndex(workspacesJson) {
-  var list = parseJsonArg(workspacesJson)
+  var list = parseJsonArg(workspacesJson, MAX_STAGE_WORKSPACES_VALUE)
   var numbered = {}
   var lots = {}
   var i
@@ -341,14 +501,11 @@ function workspaceMoveDispatch(workspaceSelector, monitor) {
 }
 
 function safeDispatchToken(value) {
-  var s = String(value == null ? "" : value)
-  if (!s) return ""
-  if (/["\\\n\r]/.test(s)) return ""
-  return s
+  return boundedToken(value, MAX_WORKSPACE_NAME_CHARS_VALUE)
 }
 
 function safeMonitor(name) {
-  return safeDispatchToken(name)
+  return boundedToken(name, MAX_MONITOR_NAME_CHARS_VALUE)
 }
 
 function parkPlan(stage, slug, toSlug, desk) {
@@ -414,7 +571,7 @@ function restoreFromPark(park) {
   var dispatches = []
   var list = (park && park.dispatches) || []
   var i
-  for (i = 0; i < list.length; i++) {
+  for (i = 0; i < list.length && i < MAX_STAGE_CLIENTS_VALUE; i++) {
     var lua = String(list[i] || "")
     var ws = /workspace = "(?:special:)?(?:name:)?omadesk-[^"]+-([0-9]+)"/.exec(lua)
     var addr = /window = "(address:[^"]+|0x[^"]+)"/.exec(lua)
@@ -455,6 +612,9 @@ function restorePlan(clientsJson, slug, desk) {
 function readDesks(text) {
   if (text == null) return packRead(true, emptyState(), "")
   var raw = String(text)
+  if (!isWithinUtf8ByteLimit(raw, MAX_DESKS_FILE_BYTES_VALUE)) {
+    return packRead(false, emptyState(), "state file exceeds " + MAX_DESKS_FILE_BYTES_VALUE + " bytes")
+  }
   if (raw.replace(/\s+/g, "") === "") return packRead(true, emptyState(), "")
   var parsed
   try {
@@ -465,13 +625,326 @@ function readDesks(text) {
   if (!parsed || typeof parsed !== "object" || isArray(parsed)) {
     return packRead(false, emptyState(), "invalid JSON: expected a desks object")
   }
-  var version = Number(parsed.version)
+  var version = parsed.version
   if (version !== 1 && version !== 2) {
     return packRead(false, emptyState(), "unsupported version (version 1 or 2 required)")
   }
+  var schemaError = validatePersistedState(parsed, version)
+  if (schemaError) return packRead(false, emptyState(), "invalid state: " + schemaError)
   // v1 stored a window recipe per workspace. Placement now comes from Hyprland,
   // so those are dropped on read; identity, extras and the monitor map carry over.
-  return packRead(true, normalizeState(parsed), "")
+  return packRead(true, normalizeState(parsed), "", version)
+}
+
+function validatePersistedState(state, version) {
+  var topError = unexpectedKey(state, { version: true, currentId: true, desks: true })
+  if (topError) return "unexpected top-level field " + topError
+  if (!isArray(state.desks)) return "desks must be an array"
+  if (state.desks.length > MAX_DESK_COUNT_VALUE) {
+    return "desk count exceeds " + MAX_DESK_COUNT_VALUE
+  }
+  if (state.currentId != null) {
+    var currentError = validateIdentifier(state.currentId, true, true)
+    if (currentError) return "currentId " + currentError
+  }
+
+  var seen = {}
+  var i
+  for (i = 0; i < state.desks.length; i++) {
+    var desk = state.desks[i]
+    if (!desk || typeof desk !== "object" || isArray(desk)) return "desk " + i + " must be an object"
+    var allowed = version === 1
+      ? { id: true, name: true, lastWorkspace: true, updatedAt: true, lastUsed: true, extras: true, layout: true, recipe: true, workspaces: true, monitorSizes: true }
+      : { id: true, name: true, lastWorkspace: true, updatedAt: true, lastUsed: true, extras: true, layout: true }
+    var deskKeyError = unexpectedKey(desk, allowed)
+    if (deskKeyError) return "desk " + i + " has unexpected field " + deskKeyError
+
+    var idError = validateIdentifier(desk.id, false, version === 1)
+    if (idError) return "desk " + i + " id " + idError
+    var seenId = "$" + desk.id
+    if (seen[seenId]) return "desk " + i + " duplicates id " + desk.id
+    seen[seenId] = true
+
+    var nameError = validatePersistedString(desk.name, MAX_DESK_NAME_CHARS_VALUE, false)
+    if (nameError) return "desk " + i + " name " + nameError
+    if (desk.lastWorkspace != null && !validWorkspaceNumber(desk.lastWorkspace)) {
+      return "desk " + i + " lastWorkspace must be an integer from 1 to 10 or null"
+    }
+    if (desk.updatedAt != null && desk.updatedAt !== "") {
+      var updatedError = validatePersistedString(desk.updatedAt, MAX_TIMESTAMP_CHARS_VALUE, false)
+      if (updatedError) return "desk " + i + " updatedAt " + updatedError
+      if (!isFinite(Date.parse(desk.updatedAt))) return "desk " + i + " updatedAt must be a timestamp"
+    }
+    if (desk.lastUsed != null) {
+      if (typeof desk.lastUsed !== "number" || !isFinite(desk.lastUsed) || desk.lastUsed < 0 || desk.lastUsed > 8640000000000000) {
+        return "desk " + i + " lastUsed must be a finite timestamp"
+      }
+    }
+
+    var extrasError = validatePersistedExtras(desk.extras, version)
+    if (extrasError) return "desk " + i + " extras " + extrasError
+    var layoutError = validatePersistedLayout(desk.layout, "layout")
+    if (layoutError) return "desk " + i + " " + layoutError
+    if (version === 1) {
+      var legacyError = validateLegacyPlacement(desk, i)
+      if (legacyError) return legacyError
+      var sizesError = validateLegacyMonitorSizes(desk.monitorSizes)
+      if (sizesError) return "desk " + i + " monitorSizes " + sizesError
+    }
+  }
+  return ""
+}
+
+function unexpectedKey(value, allowed) {
+  var key
+  for (key in value) {
+    if (!Object.prototype.hasOwnProperty.call(value, key)) continue
+    if (!Object.prototype.hasOwnProperty.call(allowed, key) || !allowed[key]) {
+      return boundedText(key, 64, "field")
+    }
+  }
+  return ""
+}
+
+function validatePersistedString(value, maxChars, allowEmpty) {
+  if (typeof value !== "string") return "must be a string"
+  if (!allowEmpty && value.length === 0) return "must not be empty"
+  if (value.length > maxChars) return "exceeds " + maxChars + " characters"
+  if (/[\u0000-\u001f\u007f]/.test(value)) return "contains control characters"
+  return ""
+}
+
+function validateIdentifier(value, allowNull, allowUnsaved) {
+  if (allowNull && value == null) return ""
+  var error = validatePersistedString(value, MAX_DESK_ID_CHARS_VALUE, false)
+  if (error) return error
+  if (allowUnsaved && value === "unnamed") return ""
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value)) return "must be a canonical lowercase desk identifier"
+  if (value === "unnamed" || value.indexOf("omadesk-") === 0 || sanitizeSlug(value) !== value) {
+    return "uses a reserved or non-round-tripping desk identifier"
+  }
+  return ""
+}
+
+function validWorkspaceNumber(value) {
+  return typeof value === "number" && isFinite(value) && Math.floor(value) === value && value >= 1 && value <= 10
+}
+
+function validatePersistedExtras(extras, version) {
+  if (extras == null) return ""
+  if (typeof extras !== "object" || isArray(extras)) return "must be an object"
+  var allowed = version === 1
+    ? { dnd: true, theme: true, launchMissing: true }
+    : { dnd: true, theme: true }
+  var keyError = unexpectedKey(extras, allowed)
+  if (keyError) return "has unexpected field " + keyError
+  if (extras.dnd != null && extras.dnd !== "leave" && extras.dnd !== "on" && extras.dnd !== "off") {
+    return "dnd must be leave, on, or off"
+  }
+  if (extras.theme != null) {
+    var themeError = validatePersistedString(extras.theme, MAX_DESK_NAME_CHARS_VALUE, false)
+    if (themeError) return "theme " + themeError
+  }
+  if (version === 1 && extras.launchMissing != null && typeof extras.launchMissing !== "boolean") {
+    return "launchMissing must be boolean"
+  }
+  return ""
+}
+
+function validatePersistedLayout(layout, label) {
+  if (layout == null) return ""
+  if (!isArray(layout)) return label + " must be an array"
+  if (layout.length > MAX_LAYOUT_ROWS_VALUE) return label + " exceeds " + MAX_LAYOUT_ROWS_VALUE + " rows"
+  var seen = {}
+  var i
+  for (i = 0; i < layout.length; i++) {
+    var row = layout[i]
+    if (!row || typeof row !== "object" || isArray(row)) return label + " row " + i + " must be an object"
+    var keyError = unexpectedKey(row, { n: true, monitor: true, focused: true })
+    if (keyError) return label + " row " + i + " has unexpected field " + keyError
+    if (!validWorkspaceNumber(row.n)) return label + " row " + i + " n must be an integer from 1 to 10"
+    if (seen[row.n]) return label + " duplicates workspace " + row.n
+    seen[row.n] = true
+    var monitorError = validatePersistedString(row.monitor, MAX_MONITOR_NAME_CHARS_VALUE, false)
+    if (monitorError) return label + " row " + i + " monitor " + monitorError
+    if (!safeMonitor(row.monitor)) return label + " row " + i + " monitor is not safe"
+    if (row.focused != null && typeof row.focused !== "boolean") {
+      return label + " row " + i + " focused must be boolean"
+    }
+  }
+  return ""
+}
+
+function validateLegacyPlacement(desk, deskIndex) {
+  var sources = []
+  if (desk.workspaces != null) sources.push({ label: "workspaces", value: desk.workspaces })
+  if (desk.recipe != null) {
+    if (typeof desk.recipe !== "object" || isArray(desk.recipe)) {
+      return "desk " + deskIndex + " recipe must be an object"
+    }
+    var recipeKeyError = unexpectedKey(desk.recipe, { lastWorkspace: true, workspaces: true })
+    if (recipeKeyError) return "desk " + deskIndex + " recipe has unexpected field " + recipeKeyError
+    if (desk.recipe.lastWorkspace != null && !validWorkspaceNumber(desk.recipe.lastWorkspace)) {
+      return "desk " + deskIndex + " recipe lastWorkspace must be an integer from 1 to 10"
+    }
+    if (desk.recipe.workspaces != null) sources.push({ label: "recipe.workspaces", value: desk.recipe.workspaces })
+  }
+  var i
+  var j
+  var windowCount = 0
+  for (i = 0; i < sources.length; i++) {
+    var source = sources[i]
+    if (!isArray(source.value)) return "desk " + deskIndex + " " + source.label + " must be an array"
+    if (source.value.length > MAX_LAYOUT_ROWS_VALUE) {
+      return "desk " + deskIndex + " " + source.label + " exceeds " + MAX_LAYOUT_ROWS_VALUE + " rows"
+    }
+    for (j = 0; j < source.value.length; j++) {
+      var row = source.value[j]
+      if (!row || typeof row !== "object" || isArray(row)) {
+        return "desk " + deskIndex + " " + source.label + " row " + j + " must be an object"
+      }
+      var rowKeyError = unexpectedKey(row, { n: true, monitor: true, focused: true, windows: true })
+      if (rowKeyError) {
+        return "desk " + deskIndex + " " + source.label + " row " + j + " has unexpected field " + rowKeyError
+      }
+      if (!validWorkspaceNumber(row.n)) {
+        return "desk " + deskIndex + " " + source.label + " row " + j + " has invalid n"
+      }
+      if (row.monitor != null) {
+        var monitorError = validatePersistedString(row.monitor, MAX_MONITOR_NAME_CHARS_VALUE, false)
+        if (monitorError || !safeMonitor(row.monitor)) {
+          return "desk " + deskIndex + " " + source.label + " row " + j + " has invalid monitor"
+        }
+      }
+      if (row.focused != null && typeof row.focused !== "boolean") {
+        return "desk " + deskIndex + " " + source.label + " row " + j + " has invalid focused"
+      }
+      if (!isArray(row.windows)) {
+        return "desk " + deskIndex + " " + source.label + " row " + j + " has invalid windows"
+      }
+      windowCount += row.windows.length
+      if (windowCount > MAX_STAGE_CLIENTS_VALUE) {
+        return "desk " + deskIndex + " legacy window count exceeds " + MAX_STAGE_CLIENTS_VALUE
+      }
+      var k
+      for (k = 0; k < row.windows.length; k++) {
+        var windowError = validateLegacyWindow(row.windows[k])
+        if (windowError) {
+          return "desk " + deskIndex + " " + source.label + " row " + j + " window " + k + " " + windowError
+        }
+      }
+    }
+  }
+  return ""
+}
+
+function validateLegacyWindow(win) {
+  if (!win || typeof win !== "object" || isArray(win)) return "must be an object"
+  var keyError = unexpectedKey(win, {
+    class: true,
+    initialClass: true,
+    title: true,
+    exec: true,
+    floating: true,
+    monitor: true,
+    address: true,
+    x: true,
+    y: true,
+    w: true,
+    h: true,
+    fullscreen: true,
+    cwd: true,
+    cmd: true,
+    profile: true,
+    icon: true
+  })
+  if (keyError) return "has unexpected field " + keyError
+
+  var stringFields = ["class", "initialClass", "title", "icon"]
+  var i
+  for (i = 0; i < stringFields.length; i++) {
+    var field = stringFields[i]
+    if (win[field] == null) continue
+    var stringError = validatePersistedString(win[field], MAX_COMPOSITOR_TEXT_CHARS_VALUE, true)
+    if (stringError) return field + " " + stringError
+  }
+  var longStringFields = ["cwd", "profile"]
+  for (i = 0; i < longStringFields.length; i++) {
+    field = longStringFields[i]
+    if (win[field] == null) continue
+    stringError = validatePersistedString(win[field], MAX_LEGACY_TEXT_CHARS_VALUE, true)
+    if (stringError) return field + " " + stringError
+  }
+  if (win.monitor != null) {
+    var monitorError = validatePersistedString(win.monitor, MAX_MONITOR_NAME_CHARS_VALUE, true)
+    if (monitorError || (win.monitor !== "" && !safeMonitor(win.monitor))) return "monitor is invalid"
+  }
+  if (win.address != null) {
+    var addressError = validatePersistedString(win.address, MAX_ADDRESS_CHARS_VALUE, true)
+    if (addressError || (win.address !== "" && !boundedToken(win.address, MAX_ADDRESS_CHARS_VALUE))) {
+      return "address is invalid"
+    }
+  }
+  if (win.floating != null && typeof win.floating !== "boolean") return "floating must be boolean"
+
+  var numericFields = ["x", "y", "w", "h"]
+  for (i = 0; i < numericFields.length; i++) {
+    field = numericFields[i]
+    if (win[field] == null) continue
+    if (typeof win[field] !== "number" || !isFinite(win[field]) ||
+        Math.abs(win[field]) > MAX_NUMERIC_MAGNITUDE_VALUE) {
+      return field + " must be a bounded finite number"
+    }
+    if ((field === "w" || field === "h") && win[field] <= 0) return field + " must be positive"
+  }
+  if (win.fullscreen != null &&
+      (typeof win.fullscreen !== "number" || !isFinite(win.fullscreen) ||
+       Math.floor(win.fullscreen) !== win.fullscreen || win.fullscreen < 0 || win.fullscreen > 3)) {
+    return "fullscreen must be an integer from 0 to 3"
+  }
+
+  var execError = validateLegacyArgv(win.exec, "exec")
+  if (execError) return execError
+  var cmdError = validateLegacyArgv(win.cmd, "cmd")
+  if (cmdError) return cmdError
+  return ""
+}
+
+function validateLegacyArgv(argv, label) {
+  if (argv == null) return ""
+  if (!isArray(argv)) return label + " must be an array"
+  if (argv.length > MAX_LEGACY_ARGV_VALUE) return label + " exceeds " + MAX_LEGACY_ARGV_VALUE + " arguments"
+  var i
+  for (i = 0; i < argv.length; i++) {
+    var error = validatePersistedString(argv[i], MAX_LEGACY_TEXT_CHARS_VALUE, true)
+    if (error) return label + " argument " + i + " " + error
+  }
+  return ""
+}
+
+function validateLegacyMonitorSizes(sizes) {
+  if (sizes == null) return ""
+  if (typeof sizes !== "object" || isArray(sizes)) return "must be an object"
+  var count = 0
+  var name
+  for (name in sizes) {
+    if (!Object.prototype.hasOwnProperty.call(sizes, name)) continue
+    count += 1
+    if (count > MAX_STAGE_MONITORS_VALUE) return "exceeds " + MAX_STAGE_MONITORS_VALUE + " monitors"
+    var nameError = validatePersistedString(name, MAX_MONITOR_NAME_CHARS_VALUE, false)
+    if (nameError || !safeMonitor(name)) return "has invalid monitor name"
+    var row = sizes[name]
+    if (!row || typeof row !== "object" || isArray(row)) return name + " must be an object"
+    var keyError = unexpectedKey(row, { w: true, h: true, width: true, height: true })
+    if (keyError) return name + " has unexpected field " + keyError
+    var width = row.w != null ? row.w : row.width
+    var height = row.h != null ? row.h : row.height
+    if (typeof width !== "number" || !isFinite(width) || width <= 0 ||
+        width > MAX_NUMERIC_MAGNITUDE_VALUE) return name + " has invalid width"
+    if (typeof height !== "number" || !isFinite(height) || height <= 0 ||
+        height > MAX_NUMERIC_MAGNITUDE_VALUE) return name + " has invalid height"
+  }
+  return ""
 }
 
 function writeDesks(state) {
@@ -484,7 +957,7 @@ function iconName(win) {
 }
 
 function iconNames(win) {
-  var cls = String((win && (win.class || win.initialClass)) || "")
+  var cls = boundedText((win && (win.class || win.initialClass)), MAX_COMPOSITOR_TEXT_CHARS_VALUE, "")
   var lower = cls.toLowerCase()
   var last = lastClassSegment(lower)
   var out = []
@@ -517,15 +990,15 @@ function newDeskRow(stage, name, extras, lastWorkspace, nowIso) {
   if (last == null && stage) last = stage.lastWorkspace
   if (last == null || last === "") last = null
   else last = Number(last)
-  if (name == null || String(name).replace(/^\s+|\s+$/g, "") === "") {
+  if (name == null || boundedDisplayName(name, "").replace(/^\s+|\s+$/g, "") === "") {
     return { lastWorkspace: last }
   }
-  var display = String(name).replace(/^\s+|\s+$/g, "")
+  var display = boundedDisplayName(name, "")
   var desk = {
     id: uniqueId(slugify(display)),
     name: display,
     lastWorkspace: last,
-    updatedAt: nowIso ? String(nowIso) : "",
+    updatedAt: nowIso ? boundedText(nowIso, MAX_TIMESTAMP_CHARS_VALUE, "") : "",
     extras: mergeExtras(defaultExtras(), extras)
   }
   var layout = liveLayoutMap(stage)
@@ -545,15 +1018,21 @@ function uniqueId(base, existingIds) {
   var id = sanitizeSlug(base)
   var taken = idSet(existingIds)
   // Unsaved rooms park on omadesk-unnamed-N; a saved desk must not reuse that id.
-  taken.unnamed = true
-  if (!taken[id]) return id
+  taken.$unnamed = true
+  if (!taken["$" + id]) return id
   var n = 2
-  while (taken[id + "-" + n]) n++
-  return id + "-" + n
+  while (true) {
+    var suffix = "-" + n
+    var stem = id.slice(0, Math.max(1, MAX_DESK_ID_CHARS_VALUE - suffix.length)).replace(/-+$/, "")
+    var candidate = stem + suffix
+    if (!taken["$" + candidate]) return candidate
+    n++
+  }
 }
 
 function saveDesk(state, recipe) {
   var next = normalizeState(state)
+  if (next.desks.length >= MAX_DESK_COUNT_VALUE) return null
   var desk = normalizeDesk(recipe)
   if (!desk) return next
   var ids = []
@@ -620,8 +1099,9 @@ function leaveDesk(state, nowMs) {
 function useDesk(state, deskId, nowMs) {
   var next = normalizeState(state)
   var now = parseNow(nowMs)
-  var to = deskId == null || deskId === "" ? null : String(deskId)
+  var to = deskId == null || deskId === "" ? null : boundedToken(deskId, MAX_DESK_ID_CHARS_VALUE)
   if (to && sanitizeSlug(to) === "unnamed") to = null
+  if (to && !deskById(next, to)) to = null
   if (next.currentId && to && String(next.currentId) !== to) {
     stampLastUsed(next, next.currentId, now)
   }
@@ -632,14 +1112,14 @@ function useDesk(state, deskId, nowMs) {
 
 function currentSlug(state) {
   if (!state || state.currentId == null || state.currentId === "") return "unnamed"
-  return String(state.currentId)
+  return sanitizeSlug(state.currentId)
 }
 
 function monitorAllowSet(connected) {
   if (!isArray(connected)) return null
   var allow = {}
   var i
-  for (i = 0; i < connected.length; i++) {
+  for (i = 0; i < connected.length && i < MAX_STAGE_MONITORS_VALUE; i++) {
     var nm = safeMonitor(connected[i])
     if (nm) allow[nm] = true
   }
@@ -658,7 +1138,7 @@ function pickConnectedMonitor(mon, allow) {
 function refreshDeskLayout(state, deskId, stage, nowIso) {
   var next = normalizeState(state)
   var layout = liveLayoutMap(stage)
-  var stamp = nowIso ? String(nowIso) : isoNow()
+  var stamp = nowIso ? boundedText(nowIso, MAX_TIMESTAMP_CHARS_VALUE, "") : isoNow()
   var i
   for (i = 0; i < next.desks.length; i++) {
     if (next.desks[i].id !== deskId) continue
@@ -672,10 +1152,12 @@ function refreshDeskLayout(state, deskId, stage, nowIso) {
 
 function renameDesk(state, deskId, newName) {
   var next = normalizeState(state)
+  var display = boundedDisplayName(newName, "")
+  if (!display) return next
   var i
   for (i = 0; i < next.desks.length; i++) {
     if (next.desks[i].id !== deskId) continue
-    if (newName != null && String(newName) !== "") next.desks[i].name = String(newName)
+    next.desks[i].name = display
     break
   }
   return next
@@ -710,7 +1192,7 @@ function workspaceIndexByN(list, n) {
   var want = Number(n)
   if (!(want >= 1 && want <= 10) || !isArray(list)) return -1
   var i
-  for (i = 0; i < list.length; i++) {
+  for (i = 0; i < list.length && i < 10; i++) {
     if (Number(list[i] && list[i].n) === want) return i
   }
   return -1
@@ -721,7 +1203,7 @@ function freeWorkspaceN(list) {
   var i
   var n
   if (isArray(list)) {
-    for (i = 0; i < list.length; i++) {
+    for (i = 0; i < list.length && i < 10; i++) {
       n = Number(list[i] && list[i].n)
       if (n >= 1 && n <= 10) taken[n] = true
     }
@@ -735,7 +1217,7 @@ function freeWorkspaceN(list) {
 function deskById(state, deskId) {
   if (!state || !isArray(state.desks) || deskId == null || deskId === "") return null
   var i
-  for (i = 0; i < state.desks.length; i++) {
+  for (i = 0; i < state.desks.length && i < MAX_DESK_COUNT_VALUE; i++) {
     if (String(state.desks[i].id) === String(deskId)) return state.desks[i]
   }
   return null
@@ -761,18 +1243,18 @@ function deskWorkspaceAddresses(stage, slug, here, n) {
   var i
   if (here) {
     var live = stageWindows(stage)
-    for (i = 0; i < live.length; i++) {
+    for (i = 0; i < live.length && out.length < MAX_STAGE_CLIENTS_VALUE; i++) {
       if (!live[i] || !live[i].address) continue
       if (clientWorkspaceN(live[i]) !== want) continue
-      out.push(String(live[i].address))
+      out.push(boundedToken(live[i].address, MAX_ADDRESS_CHARS_VALUE))
     }
     return out
   }
   var parked = parkedForSlug(stage, slug)
-  for (i = 0; i < parked.length; i++) {
+  for (i = 0; i < parked.length && i < MAX_STAGE_CLIENTS_VALUE; i++) {
     if (!parked[i] || !parked[i].address) continue
     if (Number(parked[i].n) !== want) continue
-    out.push(String(parked[i].address))
+    out.push(boundedToken(parked[i].address, MAX_ADDRESS_CHARS_VALUE))
   }
   return out
 }
@@ -897,8 +1379,8 @@ function dndAction(extras) {
 
 function themeAction(extras) {
   var theme = extras && extras.theme
-  if (theme == null || theme === "") return null
-  theme = String(theme)
+  if (typeof theme !== "string" || theme === "" || theme.length > MAX_DESK_NAME_CHARS_VALUE) return null
+  if (!theme || /[\u0000-\u001f\u007f]/.test(theme)) return null
   if (theme === "leave" || theme === "set" || theme === "set…") return null
   return theme
 }
@@ -909,13 +1391,18 @@ function extrasThemeNow(desk, extras, currentId) {
 }
 
 function parseThemeList(text) {
-  var raw = String(text || "").split(/\r?\n/)
+  if (typeof text === "string" &&
+      !isWithinUtf8ByteLimit(text, MAX_COMPOSITOR_OUTPUT_BYTES_VALUE)) return []
+  var rawText = boundedText(text, MAX_COMPOSITOR_OUTPUT_BYTES_VALUE, "")
+  var raw = rawText.split(/\r?\n/)
   var out = []
   var seen = {}
   var i
-  for (i = 0; i < raw.length; i++) {
-    var name = String(raw[i] || "").replace(/^\s+|\s+$/g, "")
+  for (i = 0; i < raw.length && out.length < MAX_THEME_NAMES_VALUE; i++) {
+    if (raw[i].length > MAX_DESK_NAME_CHARS_VALUE) continue
+    var name = raw[i].replace(/^\s+|\s+$/g, "")
     if (!name) continue
+    if (/[\u0000-\u001f\u007f]/.test(name)) continue
     if (name.indexOf("Usage:") === 0) continue
     if (seen[name]) continue
     seen[name] = true
@@ -925,14 +1412,14 @@ function parseThemeList(text) {
 }
 
 function pickerCards(state, query, stage, nowMs) {
-  var st = state || emptyState()
+  var st = normalizeState(state || emptyState())
   var q = normalizeQuery(query)
   var desks = filterDesks(st.desks || [], q)
   var cards = []
   var i
   var unsaved = q === "" ? unsavedCard(st, stage) : null
   if (unsaved) cards.push(unsaved)
-  for (i = 0; i < desks.length; i++) {
+  for (i = 0; i < desks.length && cards.length < MAX_DESK_COUNT_VALUE + 1; i++) {
     var desk = desks[i]
     if (isUnsavedDesk(desk)) continue
     var here = isCurrentDesk(desk, st.currentId)
@@ -956,7 +1443,7 @@ function unnamedParkedWindows(stage) {
   var parked = stage && isArray(stage.parked) ? stage.parked : []
   var out = []
   var i
-  for (i = 0; i < parked.length; i++) {
+  for (i = 0; i < parked.length && i < MAX_STAGE_CLIENTS_VALUE; i++) {
     if (parked[i] && parked[i].slug === "unnamed") out.push(parked[i])
   }
   return out
@@ -967,16 +1454,16 @@ function parkedToStage(parked) {
   var windows = []
   var i
   var n
-  for (i = 0; i < parked.length; i++) {
+  for (i = 0; i < parked.length && windows.length < MAX_STAGE_CLIENTS_VALUE; i++) {
     var p = parked[i] || {}
     n = Number(p.n)
     var win = copyGeom({
-      address: p.address,
-      class: p.class,
-      initialClass: p.initialClass,
-      title: p.title,
+      address: boundedToken(p.address, MAX_ADDRESS_CHARS_VALUE),
+      class: boundedText(p.class, MAX_COMPOSITOR_TEXT_CHARS_VALUE, ""),
+      initialClass: boundedText(p.initialClass, MAX_COMPOSITOR_TEXT_CHARS_VALUE, ""),
+      title: boundedText(p.title, MAX_COMPOSITOR_TEXT_CHARS_VALUE, ""),
       floating: !!p.floating,
-      monitor: p.monitor,
+      monitor: safeMonitor(p.monitor),
       workspace: n,
       hyprId: p.hyprId,
       tiledLayout: normalizeTiledLayout(p.tiledLayout)
@@ -1085,6 +1572,43 @@ function formatDeskMeta(desk, nowMs, here) {
   return hours2 + (hours2 === 1 ? " Hour Ago" : " Hours Ago")
 }
 
+function boundedText(value, maxChars, fallback) {
+  if (value == null) return fallback == null ? "" : String(fallback)
+  var type = typeof value
+  if (type !== "string" && type !== "number" && type !== "boolean") {
+    return fallback == null ? "" : String(fallback)
+  }
+  var text = String(value)
+  var cap = Number(maxChars)
+  if (!isFinite(cap) || cap < 0) return fallback == null ? "" : String(fallback)
+  if (text.length <= cap) return text
+  text = text.slice(0, cap)
+  if (text.length && /[\ud800-\udbff]/.test(text.charAt(text.length - 1))) {
+    text = text.slice(0, -1)
+  }
+  return text
+}
+
+function boundedToken(value, maxChars) {
+  if (value == null) return ""
+  var type = typeof value
+  if (type !== "string" && type !== "number") return ""
+  var text = String(value)
+  if (text.length > Number(maxChars)) return ""
+  if (/["\\\u0000-\u001f\u007f]/.test(text)) return ""
+  return text
+}
+
+function boundedDisplayName(value, fallback) {
+  var name = boundedText(value, MAX_DESK_NAME_CHARS_VALUE, "")
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/^\s+|\s+$/g, "")
+  if (name) return name
+  if (fallback != null) return boundedText(fallback, MAX_DESK_NAME_CHARS_VALUE, "")
+  return "Unnamed"
+}
+
 function isArray(value) {
   if (typeof Array !== "undefined" && typeof Array.isArray === "function") {
     return Array.isArray(value)
@@ -1098,29 +1622,37 @@ function errorMessage(err) {
   return String(err)
 }
 
-function parseJsonArg(value) {
-  if (value == null || value === "") return []
+function parseJsonList(value, maxCount) {
+  if (value == null || value === "") return { ok: true, list: [] }
   var parsed = value
   if (typeof value === "string") {
     var trimmed = value.replace(/^\s+|\s+$/g, "")
-    if (trimmed === "") return []
+    if (trimmed === "") return { ok: true, list: [] }
     try {
       parsed = JSON.parse(trimmed)
     } catch (err) {
-      return []
+      return { ok: false, list: [] }
     }
   }
-  if (isArray(parsed)) return parsed
+  var list = null
+  if (isArray(parsed)) list = parsed
   if (parsed && typeof parsed === "object") {
-    if (isArray(parsed.workspaces)) return parsed.workspaces
-    if (isArray(parsed.clients)) return parsed.clients
-    if (parsed.id != null || parsed.address != null) return [parsed]
+    if (isArray(parsed.workspaces)) list = parsed.workspaces
+    else if (isArray(parsed.clients)) list = parsed.clients
+    else if (parsed.id != null || parsed.address != null) list = [parsed]
   }
-  return []
+  if (!list) return { ok: false, list: [] }
+  var cap = Number(maxCount)
+  if (isFinite(cap) && cap >= 0 && list.length > cap) return { ok: false, list: [] }
+  return { ok: true, list: list }
+}
+
+function parseJsonArg(value, maxCount) {
+  return parseJsonList(value, maxCount).list
 }
 
 function workspaceBareName(name) {
-  var nm = String(name || "")
+  var nm = boundedToken(name, MAX_WORKSPACE_NAME_CHARS_VALUE)
   if (nm.indexOf("name:") === 0) nm = nm.slice(5)
   return nm
 }
@@ -1165,16 +1697,16 @@ function clientWorkspaceN(client) {
 }
 
 function monitorName(client, workspaces) {
-  if (client && client.monitorName) return String(client.monitorName)
-  if (client && typeof client.monitor === "string" && client.monitor !== "") return client.monitor
+  if (client && client.monitorName) return safeMonitor(client.monitorName)
+  if (client && typeof client.monitor === "string" && client.monitor !== "") return safeMonitor(client.monitor)
   var n = clientWorkspaceN(client)
   var list = workspaces || []
   var i
-  for (i = 0; i < list.length; i++) {
-    if (numberedWorkspaceId(list[i]) === n && list[i].monitor) return String(list[i].monitor)
+  for (i = 0; i < list.length && i < MAX_STAGE_WORKSPACES_VALUE; i++) {
+    if (numberedWorkspaceId(list[i]) === n && list[i].monitor) return safeMonitor(list[i].monitor)
   }
   if (!client || client.monitor == null || client.monitor === "") return ""
-  return String(client.monitor)
+  return safeMonitor(client.monitor)
 }
 
 function switchFocusWorkspace(desk, clickedN) {
@@ -1208,11 +1740,11 @@ function pickLastWorkspace(workspaces, occupied, layout) {
 }
 
 function parseLayout(monitorsJson, workspaces) {
-  var mons = parseJsonArg(monitorsJson)
+  var mons = parseJsonArg(monitorsJson, MAX_STAGE_MONITORS_VALUE)
   var out = []
   var i
   if (mons.length) {
-    for (i = 0; i < mons.length; i++) {
+    for (i = 0; i < mons.length && out.length < MAX_LAYOUT_ROWS_VALUE; i++) {
       var m = mons[i]
       if (!m || m.disabled) continue
       var name = safeMonitor(m.name)
@@ -1230,10 +1762,10 @@ function parseLayout(monitorsJson, workspaces) {
 }
 
 function parseMonitorSizes(monitorsJson) {
-  var mons = parseJsonArg(monitorsJson)
+  var mons = parseJsonArg(monitorsJson, MAX_STAGE_MONITORS_VALUE)
   var out = {}
   var i
-  for (i = 0; i < mons.length; i++) {
+  for (i = 0; i < mons.length && i < MAX_STAGE_MONITORS_VALUE; i++) {
     var m = mons[i]
     if (!m || m.disabled) continue
     var name = safeMonitor(m.name)
@@ -1253,7 +1785,8 @@ function monitorPixelSize(m) {
     w = Number(m.size[0])
     h = Number(m.size[1])
   }
-  if (!(w > 0 && h > 0)) return null
+  if (!(w > 0 && h > 0) || !isFinite(w) || !isFinite(h) ||
+      w > MAX_NUMERIC_MAGNITUDE_VALUE || h > MAX_NUMERIC_MAGNITUDE_VALUE) return null
   var t = Number(m.transform)
   if (t === 1 || t === 3 || t === 90 || t === 270) {
     var tmp = w
@@ -1269,6 +1802,7 @@ function normalizeMonitorSizes(sizes) {
   var n = 0
   var k
   for (k in sizes) {
+    if (n >= MAX_STAGE_MONITORS_VALUE) break
     if (!Object.prototype.hasOwnProperty.call(sizes, k)) continue
     var name = safeMonitor(k)
     var row = sizes[k] || {}
@@ -1300,12 +1834,12 @@ function aspectForMonitor(name, sizes) {
 }
 
 function connectedMonitorNames(monitorsJson, workspaces) {
-  var mons = parseJsonArg(monitorsJson)
+  var mons = parseJsonArg(monitorsJson, MAX_STAGE_MONITORS_VALUE)
   var out = []
   var seen = {}
   var i
   if (mons.length) {
-    for (i = 0; i < mons.length; i++) {
+    for (i = 0; i < mons.length && out.length < MAX_STAGE_MONITORS_VALUE; i++) {
       if (!mons[i] || mons[i].disabled) continue
       var name = safeMonitor(mons[i].name)
       if (!name || seen[name]) continue
@@ -1314,8 +1848,8 @@ function connectedMonitorNames(monitorsJson, workspaces) {
     }
     return out
   }
-  var list = isArray(workspaces) ? workspaces : parseJsonArg(workspaces)
-  for (i = 0; i < list.length; i++) {
+  var list = isArray(workspaces) ? workspaces : parseJsonArg(workspaces, MAX_STAGE_WORKSPACES_VALUE)
+  for (i = 0; i < list.length && i < MAX_STAGE_WORKSPACES_VALUE && out.length < MAX_STAGE_MONITORS_VALUE; i++) {
     var mon = safeMonitor(list[i] && list[i].monitor)
     if (!mon || seen[mon]) continue
     seen[mon] = true
@@ -1328,13 +1862,13 @@ function monitorForWorkspace(n, layout, windows, workspaces) {
   var i
   if (isArray(layout)) {
     for (i = 0; i < layout.length; i++) {
-      if (layout[i] && Number(layout[i].n) === Number(n) && layout[i].monitor) return String(layout[i].monitor)
+      if (layout[i] && Number(layout[i].n) === Number(n) && layout[i].monitor) return safeMonitor(layout[i].monitor)
     }
   }
-  if (windows && windows[0] && windows[0].monitor) return String(windows[0].monitor)
+  if (windows && windows[0] && windows[0].monitor) return safeMonitor(windows[0].monitor)
   var list = isArray(workspaces) ? workspaces : []
-  for (i = 0; i < list.length; i++) {
-    if (numberedWorkspaceId(list[i]) === Number(n) && list[i].monitor) return String(list[i].monitor)
+  for (i = 0; i < list.length && i < MAX_STAGE_WORKSPACES_VALUE; i++) {
+    if (numberedWorkspaceId(list[i]) === Number(n) && list[i].monitor) return safeMonitor(list[i].monitor)
   }
   return ""
 }
@@ -1360,7 +1894,7 @@ function normalizeLayout(layout) {
   var seenMon = {}
   var i
   var list = isArray(layout) ? layout : []
-  for (i = 0; i < list.length; i++) {
+  for (i = 0; i < list.length && i < MAX_STAGE_WORKSPACES_VALUE && out.length < MAX_LAYOUT_ROWS_VALUE; i++) {
     var n = Number(list[i] && list[i].n)
     var mon = safeMonitor(list[i] && list[i].monitor)
     if (!n || n < 1 || n > 10 || !mon) continue
@@ -1383,7 +1917,7 @@ function layoutDispatches(desk, connected) {
   var allow = {}
   var i
   var names = isArray(connected) ? connected : []
-  for (i = 0; i < names.length; i++) {
+  for (i = 0; i < names.length && i < MAX_STAGE_MONITORS_VALUE; i++) {
     var nm = safeMonitor(names[i])
     if (nm) allow[nm] = true
   }
@@ -1412,15 +1946,15 @@ function layoutDispatches(desk, connected) {
 }
 
 function windowSelector(address) {
-  var a = String(address || "")
+  var a = boundedToken(address, MAX_ADDRESS_CHARS_VALUE)
   if (a.indexOf("address:") === 0) a = a.slice(8)
-  a = safeDispatchToken(a)
+  a = boundedToken(a, MAX_ADDRESS_CHARS_VALUE)
   if (!a) return ""
   return "address:" + a
 }
 
 function stripAddress(address) {
-  var a = String(address || "")
+  var a = boundedToken(address, MAX_ADDRESS_CHARS_VALUE)
   if (a.indexOf("address:") === 0) return a.slice(8)
   return a
 }
@@ -1429,21 +1963,23 @@ function joinBatch(dispatches) {
   if (!dispatches || !dispatches.length) return ""
   var parts = []
   var i
-  for (i = 0; i < dispatches.length; i++) parts.push("dispatch " + dispatches[i])
+  for (i = 0; i < dispatches.length && parts.length < MAX_STAGE_CLIENTS_VALUE + MAX_LAYOUT_ROWS_VALUE; i++) {
+    parts.push("dispatch " + dispatches[i])
+  }
   return parts.join("; ")
 }
 
 function stageWindows(stage) {
   if (!stage) return []
-  if (isArray(stage.windows) && stage.windows.length) return stage.windows
+  if (isArray(stage.windows) && stage.windows.length) return stage.windows.slice(0, MAX_STAGE_CLIENTS_VALUE)
   var out = []
   var wss = stage.workspaces || []
   var i
   var j
-  for (i = 0; i < wss.length; i++) {
+  for (i = 0; i < wss.length && i < MAX_STAGE_WORKSPACES_VALUE && out.length < MAX_STAGE_CLIENTS_VALUE; i++) {
     var n = Number(wss[i] && wss[i].n)
     var wins = (wss[i] && wss[i].windows) || []
-    for (j = 0; j < wins.length; j++) {
+    for (j = 0; j < wins.length && out.length < MAX_STAGE_CLIENTS_VALUE; j++) {
       var w = wins[j] || {}
       out.push(copyGeom({
         address: w.address,
@@ -1471,16 +2007,24 @@ function lotNumberFromName(name, slug) {
 }
 
 function normalizeState(state) {
-  var src = state && typeof state === "object" ? state : {}
+  var src = state && typeof state === "object" && !isArray(state) ? state : {}
   var desks = []
   var raw = isArray(src.desks) ? src.desks : []
+  var seen = {}
   var i
-  for (i = 0; i < raw.length; i++) {
+  for (i = 0; i < raw.length && i < MAX_DESK_COUNT_VALUE; i++) {
     var desk = normalizeDesk(raw[i])
-    if (desk) desks.push(desk)
+    if (desk && desk.id === "unnamed") continue
+    var seenId = desk ? "$" + desk.id : ""
+    if (!desk || seen[seenId]) continue
+    seen[seenId] = true
+    desks.push(desk)
   }
-  var currentId = src.currentId == null || src.currentId === "" ? null : String(src.currentId)
+  var currentId = src.currentId == null || src.currentId === ""
+    ? null
+    : boundedToken(src.currentId, MAX_DESK_ID_CHARS_VALUE)
   if (currentId && sanitizeSlug(currentId) === "unnamed") currentId = null
+  if (currentId && !seen["$" + currentId]) currentId = null
   return { version: 2, currentId: currentId, desks: desks }
 }
 
@@ -1488,18 +2032,18 @@ function normalizeState(state) {
 // business, so nothing here describes windows or workspaces. The only placement
 // hint kept is layout (workspace to monitor), which parking lots cannot carry.
 function normalizeDesk(desk) {
-  if (!desk || typeof desk !== "object") return null
+  if (!desk || typeof desk !== "object" || isArray(desk)) return null
   var last = desk.lastWorkspace
   if ((last == null || last === "") && desk.recipe && desk.recipe.lastWorkspace != null) {
     last = desk.recipe.lastWorkspace
   }
-  if (last == null || last === "") last = null
-  else last = Number(last)
-  var updatedAt = desk.updatedAt ? String(desk.updatedAt) : ""
+  last = focusWorkspaceN(last)
+  var updatedAt = desk.updatedAt ? boundedText(desk.updatedAt, MAX_TIMESTAMP_CHARS_VALUE, "") : ""
+  if (updatedAt && !isFinite(Date.parse(updatedAt))) updatedAt = ""
   var lastUsed = desk.lastUsed
   if (lastUsed == null || lastUsed === "") lastUsed = null
   else lastUsed = Number(lastUsed)
-  if (!isFinite(lastUsed)) lastUsed = null
+  if (!isFinite(lastUsed) || lastUsed < 0 || lastUsed > 8640000000000000) lastUsed = null
   if (lastUsed == null && updatedAt) {
     var fromUpdated = Date.parse(updatedAt)
     if (isFinite(fromUpdated)) lastUsed = fromUpdated
@@ -1507,9 +2051,11 @@ function normalizeDesk(desk) {
   if (!updatedAt && lastUsed != null) {
     updatedAt = new Date(lastUsed).toISOString()
   }
+  var name = boundedDisplayName(desk.name, boundedText(desk.id, MAX_DESK_NAME_CHARS_VALUE, "Unnamed"))
+  var id = sanitizeSlug(desk.id || name || "unnamed")
   var out = {
-    id: String(desk.id || slugify(desk.name || "unnamed")),
-    name: String(desk.name || desk.id || "Unnamed"),
+    id: id,
+    name: name,
     lastWorkspace: last,
     updatedAt: updatedAt,
     extras: mergeExtras(defaultExtras(), desk.extras)
@@ -1541,19 +2087,27 @@ function mergeExtras(base, extra) {
     theme: "leave"
   }
   if (base && (base.dnd === "on" || base.dnd === "off" || base.dnd === "leave")) out.dnd = base.dnd
-  if (base && typeof base.theme === "string" && base.theme !== "") out.theme = base.theme
+  if (base && typeof base.theme === "string" && base.theme !== "" &&
+      base.theme.length <= MAX_DESK_NAME_CHARS_VALUE &&
+      !/[\u0000-\u001f\u007f]/.test(base.theme)) {
+    out.theme = base.theme
+  }
   if (extra && (extra.dnd === "on" || extra.dnd === "off" || extra.dnd === "leave")) out.dnd = extra.dnd
-  if (extra && typeof extra.theme === "string" && extra.theme !== "") out.theme = extra.theme
+  if (extra && typeof extra.theme === "string" && extra.theme !== "" &&
+      extra.theme.length <= MAX_DESK_NAME_CHARS_VALUE &&
+      !/[\u0000-\u001f\u007f]/.test(extra.theme)) {
+    out.theme = extra.theme
+  }
   return out
 }
 
 function lastClassSegment(cls) {
-  var parts = String(cls || "").split(".")
+  var parts = boundedText(cls, MAX_COMPOSITOR_TEXT_CHARS_VALUE, "").split(".")
   return parts[parts.length - 1] || ""
 }
 
 function prettyApp(win) {
-  var cls = String((win && (win.class || win.initialClass)) || "")
+  var cls = boundedText((win && (win.class || win.initialClass)), MAX_COMPOSITOR_TEXT_CHARS_VALUE, "")
   var full = cls.toLowerCase()
   if (full.indexOf("geforce") >= 0) return "GeForce NOW"
   if (full.indexOf("chrome-") === 0) {
@@ -1572,10 +2126,12 @@ function prettyApp(win) {
 
 function iconLetters(win) {
   var name = prettyApp(win)
-  if (win && typeof win === "object" && win.letters) return String(win.letters)
-  var raw = String(name || "").replace(/^\s+|\s+$/g, "")
+  if (win && typeof win === "object" && win.letters) {
+    return boundedText(win.letters, 4, "?")
+  }
+  var raw = boundedText(name, MAX_COMPOSITOR_TEXT_CHARS_VALUE, "").replace(/^\s+|\s+$/g, "")
   if (!raw || raw === "app") {
-    var cls = String((win && (win.class || win.initialClass)) || (typeof win === "string" ? win : "") || "")
+    var cls = boundedText((win && (win.class || win.initialClass)) || (typeof win === "string" ? win : ""), MAX_COMPOSITOR_TEXT_CHARS_VALUE, "")
     raw = lastClassSegment(cls) || cls
   }
   raw = String(raw || "").replace(/^\s+|\s+$/g, "")
@@ -1601,7 +2157,7 @@ function iconLetters(win) {
 }
 
 function shortTitle(win) {
-  var title = String((win && win.title) || "").replace(/^\s+|\s+$/g, "")
+  var title = boundedText((win && win.title), MAX_COMPOSITOR_TEXT_CHARS_VALUE, "").replace(/^\s+|\s+$/g, "")
   if (!title) return ""
   var cut = title.indexOf(" - ")
   if (cut > 0 && cut <= 24) title = title.slice(0, cut)
@@ -1614,7 +2170,7 @@ function tileLabel(ws) {
   var names = []
   var seen = {}
   var i
-  for (i = 0; i < ws.windows.length; i++) {
+  for (i = 0; i < ws.windows.length && i < MAX_RENDERED_PANES_PER_TILE_VALUE; i++) {
     var app = prettyApp(ws.windows[i])
     if (!app || seen[app]) continue
     seen[app] = true
@@ -1632,7 +2188,7 @@ function tileLabel(ws) {
   var label = names.slice(0, 3).join(" · ")
   if (names.length > 3) label += " · +" + (names.length - 3)
   else if (extra > 0) label += " · +" + extra
-  return label
+  return boundedText(label, MAX_COMPOSITOR_TEXT_CHARS_VALUE, "")
 }
 
 function workspaceTileN(ws, cap) {
@@ -1665,7 +2221,7 @@ function deskTiles(desk, limit, includeNextEmpty) {
     }
   }
   if (!listed && desk && isArray(desk.windows)) {
-    for (i = 0; i < desk.windows.length; i++) {
+    for (i = 0; i < desk.windows.length && i < MAX_STAGE_CLIENTS_VALUE; i++) {
       var wn = Number(desk.windows[i] && desk.windows[i].workspace)
       if (wn < 1 || wn > cap) continue
       if (!byN[wn] || !isArray(byN[wn].windows)) {
@@ -1767,6 +2323,8 @@ function windowGeom(win) {
   w = Number(w)
   h = Number(h)
   if (!isFinite(x) || !isFinite(y) || !isFinite(w) || !isFinite(h) || w < 1 || h < 1) return null
+  if (Math.abs(x) > MAX_NUMERIC_MAGNITUDE_VALUE || Math.abs(y) > MAX_NUMERIC_MAGNITUDE_VALUE ||
+      w > MAX_NUMERIC_MAGNITUDE_VALUE || h > MAX_NUMERIC_MAGNITUDE_VALUE) return null
   return { x: x, y: y, w: w, h: h }
 }
 
@@ -1779,7 +2337,8 @@ function windowsUnder(windows) {
 }
 
 function paneLayout(windows) {
-  var list = isArray(windows) ? windows : []
+  var all = isArray(windows) ? windows.slice(0, MAX_STAGE_CLIENTS_VALUE) : []
+  var list = all.slice(0, MAX_RENDERED_PANES_PER_TILE_VALUE)
   var empty = { panes: [], under: [] }
   var geoms = []
   var i
@@ -1799,10 +2358,10 @@ function paneLayout(windows) {
   var bw = maxX - minX
   var bh = maxY - minY
   var panes = []
-  var top = coveringWindow(list, geoms, bw, bh)
-  if (!top) top = coveringWindow(list, [])
+  var top = coveringWindow(all, geoms, bw, bh)
+  if (!top) top = coveringWindow(all, [])
   if (top) {
-    return { panes: [paneRecord(top, 0, 0, 1, 1)], under: underRecords(list, top) }
+    return { panes: [paneRecord(top, 0, 0, 1, 1)], under: underRecords(all, top) }
   }
   if (!geoms.length || !(bw > 0) || !(bh > 0)) {
     var n = list.length
@@ -1829,13 +2388,13 @@ function underRecords(list, top) {
   if (!isArray(list) || !top) return out
   var topAddr = top.address ? stripAddress(top.address) : ""
   var i
-  for (i = 0; i < list.length; i++) {
+  for (i = 0; i < list.length && out.length < MAX_RENDERED_PANES_PER_TILE_VALUE; i++) {
     var win = list[i]
     if (!win || win === top) continue
     if (topAddr && win.address && stripAddress(win.address) === topAddr) continue
     out.push({
       icon: iconName(win),
-      class: String((win.class || win.initialClass) || ""),
+      class: boundedText((win.class || win.initialClass), MAX_COMPOSITOR_TEXT_CHARS_VALUE, ""),
       letters: iconLetters(win)
     })
   }
@@ -1879,10 +2438,10 @@ function paneRecord(win, x, y, w, h) {
     w: w,
     h: h,
     icon: iconName(win),
-    class: String((win && (win.class || win.initialClass)) || ""),
+    class: boundedText((win && (win.class || win.initialClass)), MAX_COMPOSITOR_TEXT_CHARS_VALUE, ""),
     letters: iconLetters(win),
     floating: !!(win && win.floating),
-    address: win && win.address ? stripAddress(win.address) : ""
+    address: win && win.address ? boundedToken(stripAddress(win.address), MAX_ADDRESS_CHARS_VALUE) : ""
   }
 }
 
@@ -1911,7 +2470,7 @@ function parkedForSlug(stage, slug) {
   var clean = sanitizeSlug(slug)
   var out = []
   var i
-  for (i = 0; i < parked.length; i++) {
+  for (i = 0; i < parked.length && i < MAX_STAGE_CLIENTS_VALUE; i++) {
     if (parked[i] && parked[i].slug === clean) out.push(parked[i])
   }
   return out
@@ -1936,14 +2495,14 @@ function liveWindows(desk, stage, currentId) {
     var leaked = parkedForSlug(stage, desk && desk.id)
     if (!leaked.length) return hereNamed
     if (!hereNamed.length) return leaked
-    return hereNamed.concat(leaked)
+    return hereNamed.concat(leaked).slice(0, MAX_STAGE_CLIENTS_VALUE)
   }
   if (isUnsavedCurrent(currentId) && isUnsavedDesk(desk)) {
     var here = stageWindows(stage)
     var parked = parkedForSlug(stage, "unnamed")
     if (!parked.length) return here
     if (!here.length) return parked
-    return here.concat(parked)
+    return here.concat(parked).slice(0, MAX_STAGE_CLIENTS_VALUE)
   }
   return parkedForSlug(stage, desk && desk.id)
 }
@@ -1999,7 +2558,10 @@ function previewTiles(source, limit) {
 function copyStrings(list) {
   var out = []
   var i
-  for (i = 0; i < list.length; i++) out.push(String(list[i]))
+  for (i = 0; i < list.length && i < MAX_STAGE_MONITORS_VALUE; i++) {
+    var value = safeMonitor(list[i])
+    if (value) out.push(value)
+  }
   return out
 }
 
@@ -2008,18 +2570,27 @@ function idSet(existingIds) {
   if (!existingIds) return taken
   var i
   if (isArray(existingIds)) {
-    for (i = 0; i < existingIds.length; i++) taken[String(existingIds[i])] = true
+    for (i = 0; i < existingIds.length && i < MAX_DESK_COUNT_VALUE; i++) {
+      var id = boundedToken(existingIds[i], MAX_DESK_ID_CHARS_VALUE)
+      if (id) taken["$" + id] = true
+    }
     return taken
   }
   if (typeof existingIds === "object") {
+    var count = 0
     for (var k in existingIds) {
-      if (Object.prototype.hasOwnProperty.call(existingIds, k) && existingIds[k]) taken[k] = true
+      if (count >= MAX_DESK_COUNT_VALUE) break
+      if (!Object.prototype.hasOwnProperty.call(existingIds, k) || !existingIds[k]) continue
+      var key = boundedToken(k, MAX_DESK_ID_CHARS_VALUE)
+      if (!key) continue
+      taken["$" + key] = true
+      count += 1
     }
   }
   return taken
 }
 
-function packRead(ok, state, error) {
+function packRead(ok, state, error, sourceVersion) {
   var src = state || emptyState()
   var out = {
     ok: !!ok,
@@ -2027,6 +2598,10 @@ function packRead(ok, state, error) {
     version: src.version,
     currentId: src.currentId,
     desks: src.desks
+  }
+  if (sourceVersion === 1 || sourceVersion === 2) {
+    out.sourceVersion = sourceVersion
+    out.migrated = sourceVersion < src.version
   }
   if (error) out.error = error
   return out
@@ -2047,14 +2622,16 @@ function parseParkedLot(client) {
   if (!match) return null
   var n = parseInt(match[2], 10)
   if (n < 1 || n > 10) return null
-  return { slug: match[1], n: n }
+  var slug = sanitizeSlug(match[1])
+  if (parkLotName(slug, n) !== parkingLotBareName(name)) return null
+  return { slug: slug, n: n }
 }
 
 function parkedAsClients(parked) {
   var out = []
   if (!isArray(parked)) return out
   var i
-  for (i = 0; i < parked.length; i++) {
+  for (i = 0; i < parked.length && i < MAX_STAGE_CLIENTS_VALUE; i++) {
     var p = parked[i] || {}
     out.push({
       address: p.address,
@@ -2075,12 +2652,12 @@ function parkedAsClients(parked) {
 }
 
 function clientsForRestore(value) {
-  if (isArray(value)) return value
+  if (isArray(value)) return value.slice(0, MAX_STAGE_CLIENTS_VALUE)
   if (value && typeof value === "object") {
     if (isArray(value.parked) && value.parked.length) return parkedAsClients(value.parked)
-    if (isArray(value.clients)) return value.clients
+    if (isArray(value.clients)) return value.clients.slice(0, MAX_STAGE_CLIENTS_VALUE)
   }
-  return parseJsonArg(value)
+  return parseJsonArg(value, MAX_STAGE_CLIENTS_VALUE)
 }
 
 function parkedClientLot(client, slug) {
@@ -2095,9 +2672,9 @@ function parkedClientLot(client, slug) {
 
 function deskWorkspaces(desk) {
   if (!desk) return []
-  if (isArray(desk.workspaces) && desk.workspaces.length) return desk.workspaces
-  if (desk.recipe && isArray(desk.recipe.workspaces)) return desk.recipe.workspaces
-  return isArray(desk.workspaces) ? desk.workspaces : []
+  if (isArray(desk.workspaces) && desk.workspaces.length) return desk.workspaces.slice(0, MAX_STAGE_WORKSPACES_VALUE)
+  if (desk.recipe && isArray(desk.recipe.workspaces)) return desk.recipe.workspaces.slice(0, MAX_STAGE_WORKSPACES_VALUE)
+  return isArray(desk.workspaces) ? desk.workspaces.slice(0, MAX_STAGE_WORKSPACES_VALUE) : []
 }
 
 function prevLastWorkspace(source) {
@@ -2126,7 +2703,7 @@ function stampLastUsed(state, deskId, nowMs) {
   if (!state || !isArray(state.desks) || deskId == null || deskId === "") return
   var now = parseNow(nowMs)
   var i
-  for (i = 0; i < state.desks.length; i++) {
+  for (i = 0; i < state.desks.length && i < MAX_DESK_COUNT_VALUE; i++) {
     if (String(state.desks[i].id) !== String(deskId)) continue
     state.desks[i].lastUsed = now
     return
@@ -2138,15 +2715,21 @@ function addressSet(usedAddresses) {
   if (!usedAddresses) return set
   var i
   if (isArray(usedAddresses)) {
-    for (i = 0; i < usedAddresses.length; i++) {
+    for (i = 0; i < usedAddresses.length && i < MAX_STAGE_CLIENTS_VALUE; i++) {
       var addr = stripAddress(usedAddresses[i])
       if (addr) set[addr] = true
     }
     return set
   }
   if (typeof usedAddresses === "object") {
+    var count = 0
     for (var k in usedAddresses) {
-      if (Object.prototype.hasOwnProperty.call(usedAddresses, k) && usedAddresses[k]) set[stripAddress(k)] = true
+      if (count >= MAX_STAGE_CLIENTS_VALUE) break
+      if (!Object.prototype.hasOwnProperty.call(usedAddresses, k) || !usedAddresses[k]) continue
+      var key = stripAddress(k)
+      if (!key) continue
+      set[key] = true
+      count += 1
     }
   }
   return set
