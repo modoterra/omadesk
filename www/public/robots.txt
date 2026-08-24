@@ -1,4 +1,0 @@
-User-agent: *
-Allow: /
-
-Sitemap: https://omadesk.mdtrr.com/sitemap.xml

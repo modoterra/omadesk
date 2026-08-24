@@ -1,5 +1,3 @@
 .qmlls.ini
 *.qmlc
 *.jsc
-www/node_modules
-www/dist

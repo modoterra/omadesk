@@ -107,25 +107,6 @@ omarchy plugin validate .
 qmllint -I "$OMARCHY_PATH/shell" Overlay.qml BarWidget.qml
 ```
 
-A Vite landing sits in `www/`. Nothing publishes it.
-
-```sh
-npm --prefix www test
-npm --prefix www run build
-```
-
-## Site (`www/`)
-
-Unused. Intended Cloudflare Pages settings if it is wired later:
-
-| Setting | Value |
-| --- | --- |
-| Root directory | `www` |
-| Build command | `npm ci && npm run build` |
-| Build output | `dist` |
-| Production branch | `main` |
-| Custom domain | `omadesk.mdtrr.com` |
-
 ## Security
 
 Plugins run unsandboxed inside the long-lived Omarchy shell process, with
