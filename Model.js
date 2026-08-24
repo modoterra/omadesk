@@ -2,14 +2,16 @@
 // No Node APIs. No QML types.
 // Scratchpad (special:scratchpad) is global: never stage, park, restore, or store.
 // Desk lots live on other named specials: special:omadesk-<slug>-N.
-// Two Chromiums after reboot are best-effort; guessExec uses --new-window.
+// Hyprland owns placement: a desk is the windows it is holding, live on 1-10 or
+// parked in that desk's lots. desks.json only names desks and keeps their
+// preferences, so stored state cannot drift away from the compositor.
 
 function emptyState() {
-  return { version: 1, currentId: null, desks: [] }
+  return { version: 2, currentId: null, desks: [] }
 }
 
 function defaultExtras() {
-  return { dnd: "leave", theme: "leave", launchMissing: true }
+  return { dnd: "leave", theme: "leave" }
 }
 
 function desksPath(home) {
@@ -213,7 +215,13 @@ function workspaceLayoutTarget(tile, slug, here) {
   var n = focusWorkspaceN(tile && tile.n != null ? tile.n : tile)
   if (!n) return ""
   var id = tile && tile.hyprId
-  if (hasHyprWorkspaceId(id)) return String(Number(id))
+  if (hasHyprWorkspaceId(id)) {
+    var live = Number(id)
+    if (live > 0) return String(live)
+    // A negative id means the tile lives in a special workspace, which has to be
+    // addressed by name: see workspaceLayoutSelector.
+    return parkSelector(slug, n)
+  }
   if (here) return String(n)
   return parkSelector(slug, n)
 }
@@ -221,16 +229,21 @@ function workspaceLayoutTarget(tile, slug, here) {
 function workspaceLayoutPersistId(target) {
   var t = String(target || "")
   if (t.indexOf("special:") === 0) t = t.slice(8)
-  if (/^-?[0-9]+$/.test(t)) return t
+  if (/^[0-9]+$/.test(t)) return t
+  if (/^-/.test(t)) return ""
   t = t.replace(/[^A-Za-z0-9._-]+/g, "-")
   t = t.replace(/^-+/, "").replace(/-+$/, "")
   return t
 }
 
+// Hyprland reads a leading "-" as a workspace offset relative to the focused
+// workspace, so "-98" resolves to "98 workspaces back", clamped to workspace 1.
+// A rule persisted under a bare negative id therefore retargets workspace 1 on
+// every config reload instead of the special workspace it came from.
 function workspaceLayoutSelector(target) {
   var ws = safeDispatchToken(target)
   if (!ws) return ""
-  if (/^(10|[1-9])$/.test(ws)) return "name:" + ws
+  if (/^-/.test(ws)) return ""
   return ws
 }
 
@@ -246,42 +259,29 @@ function workspaceLayoutKeyword(target, layout) {
   return ws + ", layout:" + normalizeTiledLayout(layout)
 }
 
-function workspaceLayoutUnpinLua(slug, n) {
-  var parts = []
-  if (n >= 1 && n <= 10) {
-    parts.push("hl.workspace_rule({ workspace = \"" + String(n) + "\", enabled = false })")
-  }
-  if (slug) {
-    var lot = n >= 1 && n <= 10 ? safeDispatchToken(parkSelector(slug, n)) : ""
-    if (lot) parts.push("hl.workspace_rule({ workspace = \"" + lot + "\", enabled = false })")
-  }
-  return parts.join("; ")
-}
-
 function workspaceLayoutsDir(home, stateHome) {
   var xdg = String(stateHome || "").trim()
   if (xdg) return xdg + "/omarchy/workspace-layouts"
   return String(home || "") + "/.local/state/omarchy/workspace-layouts"
 }
 
-function workspaceLayoutApplyArgv(dir, target, layout, slug) {
+function workspaceLayoutApplyArgv(dir, target, layout) {
   var folder = String(dir || "")
   var ws = workspaceLayoutPersistId(target)
   if (!folder || !ws) return []
   var lua = workspaceLayoutRuleLua(target, layout).replace(/\n+$/, "")
   if (!lua) return []
-  var n = Number(target)
-  var unpin = isFinite(n) && n >= 1 && n <= 10 ? workspaceLayoutUnpinLua(slug, n) : ""
-  if (unpin) unpin += "; "
+  // Files named after a bare negative id hold a relative selector that steals
+  // workspace 1 every time Omarchy's loader re-runs the directory, so drop them
+  // and reload once so the stale rules leave the running compositor too.
   return [
     "bash",
     "-c",
-    "mkdir -p -- \"$1\" && cleaned=0 && for f in \"$1\"/omadesk-*.lua; do [ -f \"$f\" ] || continue; cleaned=1; rm -f -- \"$f\"; done && printf '%s\\n' \"$2\" > \"$3\" && hyprctl eval \"$4$2\" >/dev/null 2>&1 || true && if [ \"$cleaned\" = 1 ]; then hyprctl reload config-only >/dev/null 2>&1 || true; fi",
+    "mkdir -p -- \"$1\" || exit 0; cleaned=0; for f in \"$1\"/-*.lua; do [ -f \"$f\" ] || continue; cleaned=1; rm -f -- \"$f\"; done; printf '%s\\n' \"$2\" > \"$3\" || exit 0; hyprctl eval \"$2\" >/dev/null 2>&1 || true; if [ \"$cleaned\" = 1 ]; then hyprctl reload config-only >/dev/null 2>&1 || true; fi; exit 0",
     "omadesk-layout",
     folder,
     lua,
-    folder + "/" + ws + ".lua",
-    unpin
+    folder + "/" + ws + ".lua"
   ]
 }
 
@@ -465,232 +465,17 @@ function readDesks(text) {
   if (!parsed || typeof parsed !== "object" || isArray(parsed)) {
     return packRead(false, emptyState(), "invalid JSON: expected a desks object")
   }
-  if (parsed.version !== 1 && parsed.version !== "1") {
-    return packRead(false, emptyState(), "unsupported version (version 1 required)")
+  var version = Number(parsed.version)
+  if (version !== 1 && version !== 2) {
+    return packRead(false, emptyState(), "unsupported version (version 1 or 2 required)")
   }
+  // v1 stored a window recipe per workspace. Placement now comes from Hyprland,
+  // so those are dropped on read; identity, extras and the monitor map carry over.
   return packRead(true, normalizeState(parsed), "")
 }
 
 function writeDesks(state) {
   return JSON.stringify(normalizeState(state), null, 2) + "\n"
-}
-
-function guessExec(win) {
-  var cls = String((win && (win.class || win.initialClass)) || "")
-  var lower = cls.toLowerCase()
-  var last = lastClassSegment(lower)
-  if (lower === "dev.zed.zed" || last === "zed") return ["zed"]
-  if (lower.indexOf("ghostty") >= 0 || last === "ghostty") return ["ghostty"]
-  if (lower.indexOf("geforce") >= 0) return ["gtk-launch", "com.nvidia.geforcenow.desktop"]
-  var pwa = chromePwaExec(cls)
-  if (pwa && pwa.length) return pwa
-  if (isChromiumClass(win)) {
-    var argv = ["chromium"]
-    var profile = chromiumProfile(win)
-    if (profile) argv.push("--profile-directory=" + profile)
-    argv.push("--new-window")
-    return argv
-  }
-  var known = knownDesktopExec(lower, last)
-  if (known && known.length) return known
-  if (isDesktopIdClass(cls)) return ["gtk-launch", cls + ".desktop"]
-  return []
-}
-
-function isDesktopIdClass(cls) {
-  return /^(com|org|io|net|dev|app|eu|de|me)(\.[A-Za-z0-9-]+)+$/.test(String(cls || ""))
-}
-
-function knownDesktopExec(lower, last) {
-  var key = String(lower || "")
-  var tail = String(last || "")
-  var map = {
-    "firefox": ["firefox"],
-    "firefox-esr": ["firefox"],
-    "org.mozilla.firefox": ["gtk-launch", "org.mozilla.firefox.desktop"],
-    "slack": ["gtk-launch", "slack.desktop"],
-    "discord": ["gtk-launch", "discord.desktop"],
-    "steam": ["steam"],
-    "spotify": ["spotify"],
-    "code": ["code"],
-    "code - oss": ["code"],
-    "cursor": ["cursor"],
-    "nautilus": ["gtk-launch", "org.gnome.Nautilus.desktop"],
-    "org.gnome.nautilus": ["gtk-launch", "org.gnome.Nautilus.desktop"],
-    "foot": ["foot"],
-    "alacritty": ["alacritty"],
-    "kitty": ["kitty"],
-    "mpv": ["mpv"],
-    "obs": ["gtk-launch", "com.obsproject.Studio.desktop"],
-    "com.obsproject.studio": ["gtk-launch", "com.obsproject.Studio.desktop"],
-    "telegram": ["telegram-desktop"],
-    "org.telegram.desktop": ["gtk-launch", "org.telegram.desktop.desktop"],
-    "signal": ["signal-desktop"],
-    "signal-desktop": ["signal-desktop"],
-    "obsidian": ["obsidian"]
-  }
-  if (map[key]) return map[key]
-  if (map[tail]) return map[tail]
-  return null
-}
-
-function isChromiumClass(win) {
-  var cls = String((win && (win.class || win.initialClass)) || (typeof win === "string" ? win : "") || "").toLowerCase()
-  if (cls.indexOf("chrome-") === 0) return true
-  var last = lastClassSegment(cls)
-  return cls.indexOf("chromium") >= 0 || last === "chromium" || last === "chrome" || last === "google-chrome"
-}
-
-function profileFromArgv(argv) {
-  var list = isArray(argv) ? argv : []
-  var i
-  for (i = 0; i < list.length; i++) {
-    var a = String(list[i] || "")
-    if (a.indexOf("--profile-directory=") === 0) {
-      var v = a.replace("--profile-directory=", "").replace(/^\s+|\s+$/g, "")
-      return v
-    }
-    if (a === "--profile-directory" && list[i + 1])
-      return String(list[i + 1]).replace(/^\s+|\s+$/g, "")
-  }
-  return ""
-}
-
-function chromiumProfile(win) {
-  if (!win || typeof win === "string") return ""
-  if (win.profile) return String(win.profile)
-  var fromExec = profileFromArgv(win.exec)
-  if (fromExec) return fromExec
-  return profileFromArgv(win.cmd)
-}
-
-function launchExecRules(item) {
-  if (!item) return ""
-  var parts = []
-  var ws = item.workspace !== undefined && item.workspace !== null ? String(item.workspace) : ""
-  if (ws) parts.push("workspace " + ws + " silent")
-  var mon = safeMonitor(item.monitor)
-  if (mon) parts.push("monitor " + mon)
-  if (item.floating) parts.push("float")
-  var w = Number(item.w)
-  var h = Number(item.h)
-  if (item.floating && isFinite(w) && isFinite(h) && w >= 1 && h >= 1)
-    parts.push("size " + Math.round(w) + " " + Math.round(h))
-  var x = Number(item.x)
-  var y = Number(item.y)
-  if (item.floating && isFinite(x) && isFinite(y))
-    parts.push("move " + Math.round(x) + " " + Math.round(y))
-  return parts.join("; ")
-}
-
-function chromePwaExec(cls) {
-  var raw = String(cls || "")
-  if (raw.toLowerCase().indexOf("chrome-") !== 0) return null
-  var rest = raw.slice(7)
-  var parts = rest.split("__")
-  var host = String(parts[0] || "").replace(/\/$/, "")
-  if (!host || host.indexOf(".") === -1) return null
-  var argv = ["chromium"]
-  var profile = parts.length > 1 ? String(parts[parts.length - 1] || "") : ""
-  profile = profile.replace(/^-+/, "")
-  var pm = /^(profile_\d+)$/i.exec(profile) || /profile_(\d+)/i.exec(profile)
-  if (pm) {
-    var label = /^profile_\d+$/i.test(profile) ? profile.replace(/_/g, " ") : "Profile " + pm[1]
-    argv.push("--profile-directory=" + label)
-  }
-  argv.push("--app=https://" + host)
-  return argv
-}
-
-function isUsableExec(argv, win) {
-  if (!isArray(argv) || !argv.length) return false
-  var cmd = String(argv[0] || "")
-  if (!cmd) return false
-  if (cmd.indexOf("__") >= 0) return false
-  if (/profile_\d/i.test(cmd)) return false
-  if (cmd.charAt(0) === "/") return true
-  if (cmd === "gtk-launch" || cmd === "uwsm-app" || cmd === "chromium" || cmd === "zed" || cmd === "ghostty") return true
-  var cls = String((win && (win.class || win.initialClass)) || "").toLowerCase()
-  var last = lastClassSegment(cls)
-  if (cls.indexOf("chrome-") === 0) return false
-  if (cls.indexOf("geforce") >= 0) return false
-  if (last && cmd.toLowerCase() === last) {
-    if (cls !== last) return false
-    var guessed = guessExec(win)
-    if (!guessed || !guessed.length || String(guessed[0]).toLowerCase() !== cmd.toLowerCase()) return false
-  }
-  return /^[A-Za-z0-9][A-Za-z0-9._+-]*$/.test(cmd)
-}
-
-function resolveExec(win) {
-  var stored = win && isArray(win.exec) ? copyStrings(win.exec) : []
-  if (isUsableExec(stored, win) && execHasCommand(stored)) return stored
-  if (isTerminalClass(win) && (win.cwd || (isArray(win.cmd) && win.cmd.length) || (typeof win.cmd === "string" && win.cmd))) {
-    var built = terminalExec(win)
-    if (built && built.length) return built
-  }
-  if (isUsableExec(stored, win)) return stored
-  return guessExec(win)
-}
-
-function isTerminalClass(win) {
-  var cls = String((win && (win.class || win.initialClass)) || (typeof win === "string" ? win : "") || "").toLowerCase()
-  var last = lastClassSegment(cls)
-  return cls.indexOf("ghostty") >= 0 || last === "ghostty" || last === "foot" || last === "alacritty" || last === "kitty" || last === "wezterm" || last === "com.mitchellh.ghostty"
-}
-
-function isShellBin(cmd0) {
-  var b = String(cmd0 || "").split("/")
-  b = String(b[b.length - 1] || "").toLowerCase()
-  return b === "bash" || b === "zsh" || b === "fish" || b === "sh" || b === "nu" || b === "dash"
-}
-
-function execHasCommand(argv) {
-  if (!isArray(argv)) return false
-  var i
-  for (i = 0; i < argv.length; i++) {
-    var a = String(argv[i] || "")
-    if (a === "-e" || a.indexOf("--command") === 0) return true
-  }
-  return false
-}
-
-function safeArgv(list) {
-  var src = list
-  if (typeof list === "string" && list) src = [list]
-  if (!isArray(src)) return []
-  var out = []
-  var i
-  for (i = 0; i < src.length; i++) {
-    var s = String(src[i] == null ? "" : src[i])
-    if (!s || /[\n\r]/.test(s)) continue
-    out.push(s)
-  }
-  return out
-}
-
-function terminalExec(win) {
-  var base = guessExec(win)
-  if (!isArray(base) || !base.length) return []
-  var out = copyStrings(base)
-  var bin = String(out[0] || "")
-  var cwd = String((win && win.cwd) || "")
-  if (cwd && !/[\n\r]/.test(cwd)) {
-    if (bin === "ghostty") out.push("--working-directory=" + cwd)
-    else if (bin === "foot") { out.push("-D"); out.push(cwd) }
-    else if (bin === "alacritty") { out.push("--working-directory"); out.push(cwd) }
-    else if (bin === "kitty") { out.push("--directory"); out.push(cwd) }
-  }
-  var cmd = safeArgv(win && win.cmd)
-  if (cmd.length && isShellBin(cmd[0])) cmd = []
-  if (cmd.length) {
-    if (bin === "kitty") out = out.concat(cmd)
-    else {
-      out.push("-e")
-      out = out.concat(cmd)
-    }
-  }
-  return out
 }
 
 function iconName(win) {
@@ -725,29 +510,35 @@ function mappedIcon(lower, last) {
   return ""
 }
 
-function snapshotRecipe(stage, name, extras, lastWorkspace, nowIso) {
-  var workspaces = snapshotWorkspaces(stage)
+// Saving a desk records who it is, not what is in it: the windows stay where
+// Hyprland already has them and are found again by lot name.
+function newDeskRow(stage, name, extras, lastWorkspace, nowIso) {
   var last = lastWorkspace
   if (last == null && stage) last = stage.lastWorkspace
   if (last == null || last === "") last = null
   else last = Number(last)
   if (name == null || String(name).replace(/^\s+|\s+$/g, "") === "") {
-    return { workspaces: workspaces, lastWorkspace: last }
+    return { lastWorkspace: last }
   }
   var display = String(name).replace(/^\s+|\s+$/g, "")
-  var recipe = {
+  var desk = {
     id: uniqueId(slugify(display)),
     name: display,
     lastWorkspace: last,
     updatedAt: nowIso ? String(nowIso) : "",
-    extras: mergeExtras(defaultExtras(), extras),
-    workspaces: workspaces
+    extras: mergeExtras(defaultExtras(), extras)
   }
-  var layout = snapshotLayout(stage, workspaces)
-  if (layout.length) recipe.layout = layout
-  var sizes = normalizeMonitorSizes(stage && stage.monitorSizes)
-  if (sizes) recipe.monitorSizes = sizes
-  return recipe
+  var layout = liveLayoutMap(stage)
+  if (layout.length) desk.layout = layout
+  return desk
+}
+
+// Parking lots do not remember which monitor a workspace was on, so the desk
+// row keeps that map. It is re-read from the compositor on every park, so it
+// tracks reality instead of aging like the old window recipes did.
+function liveLayoutMap(stage) {
+  if (stage && isArray(stage.layout) && stage.layout.length) return normalizeLayout(stage.layout)
+  return deskLayout({ workspaces: (stage && stage.workspaces) || [] })
 }
 
 function uniqueId(base, existingIds) {
@@ -775,49 +566,33 @@ function saveDesk(state, recipe) {
 }
 
 function demoDesks() {
-  var writing = {
-    id: "writing",
-    name: "Writing",
-    lastWorkspace: 3,
-    updatedAt: "2026-08-19T16:40:00Z",
-    extras: defaultExtras(),
-    workspaces: [
-      {
-        n: 1,
-        windows: [
-          recipeWindow("dev.zed.Zed", "charcana", ["zed", "/home/hallas/Work/charcana"])
-        ]
-      },
-      { n: 2, windows: [recipeWindow("com.mitchellh.ghostty", "", ["ghostty"])] },
-      { n: 3, windows: [recipeWindow("chromium", "draft", ["chromium", "--new-window"])] }
-    ]
-  }
-  var call = {
-    id: "call",
-    name: "Call",
-    lastWorkspace: 1,
-    updatedAt: "2026-08-19T13:40:00Z",
-    extras: mergeExtras(defaultExtras(), { dnd: "on" }),
-    workspaces: [
-      { n: 1, windows: [recipeWindow("chromium", "Meet", ["chromium", "--new-window"])] },
-      { n: 2, windows: [recipeWindow("com.mitchellh.ghostty", "notes", ["ghostty"])] }
-    ]
-  }
-  var review = {
-    id: "review",
-    name: "Review",
-    lastWorkspace: 1,
-    updatedAt: "2026-08-18T16:40:00Z",
-    extras: defaultExtras(),
-    workspaces: [
-      { n: 1, windows: [recipeWindow("chromium", "PRs", ["chromium", "--new-window"])] },
-      { n: 2, windows: [recipeWindow("com.mitchellh.ghostty", "diff", ["ghostty"])] }
-    ]
-  }
   return {
-    version: 1,
+    version: 2,
     currentId: "writing",
-    desks: [writing, call, review]
+    desks: [
+      {
+        id: "writing",
+        name: "Writing",
+        lastWorkspace: 3,
+        updatedAt: "2026-08-19T16:40:00Z",
+        extras: defaultExtras(),
+        layout: [{ n: 1, monitor: "DP-1" }]
+      },
+      {
+        id: "call",
+        name: "Call",
+        lastWorkspace: 1,
+        updatedAt: "2026-08-19T13:40:00Z",
+        extras: mergeExtras(defaultExtras(), { dnd: "on" })
+      },
+      {
+        id: "review",
+        name: "Review",
+        lastWorkspace: 1,
+        updatedAt: "2026-08-18T16:40:00Z",
+        extras: defaultExtras()
+      }
+    ]
   }
 }
 
@@ -860,37 +635,6 @@ function currentSlug(state) {
   return String(state.currentId)
 }
 
-function matchWindow(recipeWin, clients, usedAddresses, workspaceN) {
-  var list = isArray(clients) ? clients : parseJsonArg(clients)
-  var used = addressSet(usedAddresses)
-  var i
-  var wantAddr = recipeWin && recipeWin.address ? stripAddress(recipeWin.address) : ""
-  if (wantAddr) {
-    for (i = 0; i < list.length; i++) {
-      var byAddr = list[i]
-      var addr = stripAddress(byAddr && byAddr.address)
-      if (!addr || used[addr]) continue
-      if (addr === wantAddr) return byAddr
-    }
-  }
-  var wantClass = String((recipeWin && (recipeWin.class || recipeWin.initialClass)) || "").toLowerCase()
-  var wantInitial = String((recipeWin && recipeWin.initialClass) || "").toLowerCase()
-  if (!wantClass) return null
-  var wantN = workspaceN == null || workspaceN === "" ? null : Number(workspaceN)
-  for (i = 0; i < list.length; i++) {
-    var client = list[i]
-    var clientAddr = stripAddress(client && client.address)
-    if (clientAddr && used[clientAddr]) continue
-    if (wantN != null && isFinite(wantN) && clientWorkspaceN(client) !== wantN) continue
-    var cc = String(client.class || "").toLowerCase()
-    var ic = String(client.initialClass || "").toLowerCase()
-    if (cc === wantClass || ic === wantClass || (wantInitial && (cc === wantInitial || ic === wantInitial))) {
-      return client
-    }
-  }
-  return null
-}
-
 function monitorAllowSet(connected) {
   if (!isArray(connected)) return null
   var allow = {}
@@ -909,92 +653,18 @@ function pickConnectedMonitor(mon, allow) {
   return mon
 }
 
-function launchMissingPlan(desk, clientsJson, currentId) {
-  var extras = (desk && desk.extras) || defaultExtras()
-  var empty = []
-  empty.launches = []
-  if (extras.launchMissing === false) return empty
-  // After switch restore, currentId is the incoming desk. Live rooms keep
-  // closed recipe windows closed; wake still calls this with two arguments.
-  if (currentId !== undefined && currentId !== null && currentId !== "") {
-    if (liveWindows(desk, clientsJson, currentId).length) return empty
-  }
-  var clients = clientsForMatch(clientsJson, desk)
-  var allow = null
-  if (clientsJson && typeof clientsJson === "object" && !isArray(clientsJson) && isArray(clientsJson.monitors)) {
-    allow = monitorAllowSet(clientsJson.monitors)
-  }
-  var used = []
-  var launches = []
-  var workspaces = deskWorkspaces(desk)
-  var i
-  var j
-  for (i = 0; i < workspaces.length; i++) {
-    var ws = workspaces[i]
-    var n = Number(ws && ws.n)
-    if (n < 1 || n > 10) continue
-    var wins = (ws && ws.windows) || []
-    for (j = 0; j < wins.length; j++) {
-      var rw = wins[j]
-      if (isScratchpadish(rw)) continue
-      var matched = matchWindow(rw, clients, used, n)
-      if (matched) {
-        if (matched.address) used.push(String(matched.address))
-        continue
-      }
-      var exec = resolveExec(rw)
-      if (!exec || !exec.length) continue
-      var mon = pickConnectedMonitor((ws && ws.monitor) || (rw && rw.monitor), allow)
-      var item = {
-        n: n,
-        workspace: String(n),
-        exec: exec,
-        argv: exec,
-        class: String((rw && rw.class) || ""),
-        title: String((rw && rw.title) || "")
-      }
-      if (mon) item.monitor = mon
-      if (rw && rw.floating) item.floating = true
-      var g = windowGeom(rw)
-      if (g) {
-        item.x = g.x
-        item.y = g.y
-        item.w = g.w
-        item.h = g.h
-      }
-      launches.push(item)
-    }
-  }
-  launches.launches = launches.slice()
-  return launches
-}
-
-function updateDesk(state, deskId, stage, nowIso) {
+// Refresh the workspace-to-monitor map for a desk from the live compositor.
+// Called when a desk parks, so its lots can be put back on the right displays.
+function refreshDeskLayout(state, deskId, stage, nowIso) {
   var next = normalizeState(state)
-  var i
-  var source = stage
-  if (stage && stage.recipe) source = stage.recipe
-  var workspaces = snapshotWorkspaces(source)
-  var last = prevLastWorkspace(source)
+  var layout = liveLayoutMap(stage)
   var stamp = nowIso ? String(nowIso) : isoNow()
+  var i
   for (i = 0; i < next.desks.length; i++) {
     if (next.desks[i].id !== deskId) continue
-    var prev = next.desks[i]
-    var updated = {
-      id: prev.id,
-      name: prev.name,
-      lastWorkspace: last != null ? last : prev.lastWorkspace,
-      updatedAt: stamp,
-      lastUsed: Date.parse(stamp) || Date.now(),
-      extras: prev.extras,
-      workspaces: workspaces
-    }
-    var layout = snapshotLayout(source, workspaces)
-    if (layout.length) updated.layout = layout
-    var sizes = normalizeMonitorSizes(source && source.monitorSizes)
-    if (!sizes) sizes = normalizeMonitorSizes(prev.monitorSizes)
-    if (sizes) updated.monitorSizes = sizes
-    next.desks[i] = updated
+    next.desks[i].updatedAt = stamp
+    next.desks[i].lastUsed = Date.parse(stamp) || Date.now()
+    if (layout.length) next.desks[i].layout = layout
     break
   }
   return next
@@ -1071,47 +741,115 @@ function deskById(state, deskId) {
   return null
 }
 
-function moveWorkspace(state, fromDeskId, workspaceN, toDeskId, toIndex) {
-  var next = normalizeState(state)
-  var fromN = Number(workspaceN)
-  if (!(fromN >= 1 && fromN <= 10)) return next
-  var fromDesk = deskById(next, fromDeskId)
-  var toDesk = deskById(next, toDeskId)
-  if (!fromDesk || !toDesk) return next
-  var srcIndex = workspaceIndexByN(fromDesk.workspaces, fromN)
-  if (srcIndex < 0) return next
-  var ws = cloneJson(fromDesk.workspaces[srcIndex])
-  if (!ws) return next
+// Placement lives in Hyprland, so a workspace move is a batch of window
+// dispatches rather than an edit to stored state. Both planners read addresses
+// from the pre-move stage: every dispatch names one window, so the compositor
+// can apply them in any order without the sets bleeding into each other.
 
-  if (String(fromDeskId) === String(toDeskId)) {
-    var same = fromDesk.workspaces.slice()
-    same.splice(srcIndex, 1)
-    same.splice(clampIndex(toIndex, same.length), 0, ws)
-    fromDesk.workspaces = same
-    return next
+function deskWorkspaceSelector(slug, n, here) {
+  if (here) {
+    var bare = focusWorkspaceN(n)
+    return bare ? String(bare) : ""
   }
+  return parkSelector(slug, n)
+}
 
-  var dest = toDesk.workspaces.slice()
-  var takenN = Number(ws.n)
+function deskWorkspaceAddresses(stage, slug, here, n) {
+  var want = focusWorkspaceN(n)
+  var out = []
+  if (!want) return out
   var i
-  var collision = false
-  for (i = 0; i < dest.length; i++) {
-    if (Number(dest[i] && dest[i].n) === takenN) {
-      collision = true
-      break
+  if (here) {
+    var live = stageWindows(stage)
+    for (i = 0; i < live.length; i++) {
+      if (!live[i] || !live[i].address) continue
+      if (clientWorkspaceN(live[i]) !== want) continue
+      out.push(String(live[i].address))
     }
+    return out
   }
-  if (collision) {
-    var free = freeWorkspaceN(dest)
-    if (!free) return normalizeState(state)
-    ws.n = free
+  var parked = parkedForSlug(stage, slug)
+  for (i = 0; i < parked.length; i++) {
+    if (!parked[i] || !parked[i].address) continue
+    if (Number(parked[i].n) !== want) continue
+    out.push(String(parked[i].address))
   }
-  var fromList = fromDesk.workspaces.slice()
-  fromList.splice(srcIndex, 1)
-  fromDesk.workspaces = fromList
-  dest.splice(clampIndex(toIndex, dest.length), 0, ws)
-  toDesk.workspaces = dest
-  return next
+  return out
+}
+
+function deskOccupiedWorkspaces(stage, slug, here) {
+  var out = []
+  var seen = {}
+  var i
+  var n
+  if (here) {
+    var live = stageWindows(stage)
+    for (i = 0; i < live.length; i++) {
+      n = clientWorkspaceN(live[i])
+      if (!n || seen[n]) continue
+      seen[n] = true
+      out.push({ n: n })
+    }
+    return out
+  }
+  var parked = parkedForSlug(stage, slug)
+  for (i = 0; i < parked.length; i++) {
+    n = Number(parked[i] && parked[i].n)
+    if (!(n >= 1 && n <= 10) || seen[n]) continue
+    seen[n] = true
+    out.push({ n: n })
+  }
+  return out
+}
+
+function packMovePlan(dispatches) {
+  return { dispatches: dispatches, batch: joinBatch(dispatches) }
+}
+
+function swapWorkspacePlan(stage, slug, here, aN, bN) {
+  var a = focusWorkspaceN(aN)
+  var b = focusWorkspaceN(bN)
+  if (!a || !b || a === b) return packMovePlan([])
+  var aSel = deskWorkspaceSelector(slug, a, here)
+  var bSel = deskWorkspaceSelector(slug, b, here)
+  if (!aSel || !bSel) return packMovePlan([])
+  var aWins = deskWorkspaceAddresses(stage, slug, here, a)
+  var bWins = deskWorkspaceAddresses(stage, slug, here, b)
+  var dispatches = []
+  var i
+  var lua
+  for (i = 0; i < aWins.length; i++) {
+    lua = moveDispatch(bSel, aWins[i])
+    if (lua) dispatches.push(lua)
+  }
+  for (i = 0; i < bWins.length; i++) {
+    lua = moveDispatch(aSel, bWins[i])
+    if (lua) dispatches.push(lua)
+  }
+  return packMovePlan(dispatches)
+}
+
+function moveWorkspaceToDeskPlan(stage, fromSlug, fromHere, workspaceN, toSlug, toHere) {
+  var n = focusWorkspaceN(workspaceN)
+  if (!n) return packMovePlan([])
+  if (sanitizeSlug(fromSlug) === sanitizeSlug(toSlug)) return packMovePlan([])
+  var wins = deskWorkspaceAddresses(stage, fromSlug, fromHere, n)
+  if (!wins.length) return packMovePlan([])
+  var occupied = deskOccupiedWorkspaces(stage, toSlug, toHere)
+  var dest = n
+  if (workspaceIndexByN(occupied, n) >= 0) {
+    dest = freeWorkspaceN(occupied)
+    if (!dest) return packMovePlan([])
+  }
+  var sel = deskWorkspaceSelector(toSlug, dest, toHere)
+  if (!sel) return packMovePlan([])
+  var dispatches = []
+  var i
+  for (i = 0; i < wins.length; i++) {
+    var lua = moveDispatch(sel, wins[i])
+    if (lua) dispatches.push(lua)
+  }
+  return packMovePlan(dispatches)
 }
 
 function forgetRestorePlan(clientsJson, desk) {
@@ -1743,31 +1481,14 @@ function normalizeState(state) {
   }
   var currentId = src.currentId == null || src.currentId === "" ? null : String(src.currentId)
   if (currentId && sanitizeSlug(currentId) === "unnamed") currentId = null
-  return { version: 1, currentId: currentId, desks: desks }
+  return { version: 2, currentId: currentId, desks: desks }
 }
 
+// A desk row is identity plus preferences. Where its windows sit is Hyprland's
+// business, so nothing here describes windows or workspaces. The only placement
+// hint kept is layout (workspace to monitor), which parking lots cannot carry.
 function normalizeDesk(desk) {
   if (!desk || typeof desk !== "object") return null
-  var workspaces = []
-  var raw = deskWorkspaces(desk)
-  var i
-  var j
-  for (i = 0; i < raw.length; i++) {
-    var ws = raw[i]
-    var n = Number(ws && ws.n)
-    if (n < 1 || n > 10) continue
-    var windows = []
-    var wins = (ws && ws.windows) || []
-    for (j = 0; j < wins.length; j++) {
-      if (isScratchpadish(wins[j])) continue
-      windows.push(normalizeRecipeWindow(wins[j]))
-    }
-    var rec = { n: n, windows: windows }
-    var mon = safeMonitor(ws && ws.monitor)
-    if (!mon && windows[0]) mon = safeMonitor(windows[0].monitor)
-    if (mon) rec.monitor = mon
-    workspaces.push(rec)
-  }
   var last = desk.lastWorkspace
   if ((last == null || last === "") && desk.recipe && desk.recipe.lastWorkspace != null) {
     last = desk.recipe.lastWorkspace
@@ -1791,42 +1512,15 @@ function normalizeDesk(desk) {
     name: String(desk.name || desk.id || "Unnamed"),
     lastWorkspace: last,
     updatedAt: updatedAt,
-    extras: mergeExtras(defaultExtras(), desk.extras),
-    workspaces: workspaces
+    extras: mergeExtras(defaultExtras(), desk.extras)
   }
   if (lastUsed != null && isFinite(Number(lastUsed))) out.lastUsed = Number(lastUsed)
+  // v1 files carry no layout array but do have per-workspace monitors on the
+  // recipe we are discarding, so recover the map from it once on upgrade.
   var layout = normalizeLayout(desk.layout)
-  if (!layout.length) layout = deskLayout({ workspaces: workspaces })
+  if (!layout.length) layout = deskLayout({ workspaces: deskWorkspaces(desk) })
   if (layout.length) out.layout = layout
-  var sizes = normalizeMonitorSizes(desk.monitorSizes)
-  if (sizes) out.monitorSizes = sizes
   return out
-}
-
-function normalizeRecipeWindow(w) {
-  var src = w || {}
-  var exec = resolveExec(src)
-  var rec = {
-    class: String(src.class || ""),
-    initialClass: String(src.initialClass || src.class || ""),
-    title: String(src.title || ""),
-    exec: exec,
-    floating: !!src.floating,
-    monitor: String(src.monitor || "")
-  }
-  if (src.address) rec.address = String(src.address)
-  copyGeom(rec, src)
-  delete rec.pid
-  if (rec.fullscreen) rec.fullscreen = Number(rec.fullscreen)
-  var cwd = String(src.cwd || "")
-  if (cwd && !/[\n\r]/.test(cwd)) rec.cwd = cwd
-  var cmd = safeArgv(src.cmd)
-  if (cmd.length && !isShellBin(cmd[0])) rec.cmd = cmd
-  var profile = chromiumProfile(src)
-  if (profile) rec.profile = profile
-  var icon = iconName(src)
-  if (icon) rec.icon = icon
-  return rec
 }
 
 function isScratchpadish(w) {
@@ -1844,16 +1538,12 @@ function isScratchpadish(w) {
 function mergeExtras(base, extra) {
   var out = {
     dnd: "leave",
-    theme: "leave",
-    launchMissing: true
+    theme: "leave"
   }
   if (base && (base.dnd === "on" || base.dnd === "off" || base.dnd === "leave")) out.dnd = base.dnd
   if (base && typeof base.theme === "string" && base.theme !== "") out.theme = base.theme
-  if (base && base.launchMissing === false) out.launchMissing = false
   if (extra && (extra.dnd === "on" || extra.dnd === "off" || extra.dnd === "leave")) out.dnd = extra.dnd
   if (extra && typeof extra.theme === "string" && extra.theme !== "") out.theme = extra.theme
-  if (extra && extra.launchMissing === false) out.launchMissing = false
-  if (extra && extra.launchMissing === true) out.launchMissing = true
   return out
 }
 
@@ -2213,67 +1903,7 @@ function copyGeom(dst, src) {
     var fs = Number(src.fullscreen)
     if (isFinite(fs) && fs > 0) dst.fullscreen = fs
   }
-  if (src.cwd) dst.cwd = String(src.cwd)
-  var cmd = safeArgv(src.cmd)
-  if (cmd.length) dst.cmd = cmd
-  if (src.profile) dst.profile = String(src.profile)
   return dst
-}
-
-function parseTerminalProbe(text) {
-  var lines = String(text || "").split(/\r?\n/)
-  var out = []
-  var i
-  for (i = 0; i < lines.length; i++) {
-    var line = lines[i]
-    if (!line) continue
-    var parts = line.split("\t")
-    if (parts.length < 2) continue
-    var pid = Number(parts[0])
-    if (!isFinite(pid) || pid < 1) continue
-    var cwd = String(parts[1] || "")
-    var cmd = []
-    if (parts.length > 2 && parts[2]) cmd = safeArgv(parts.slice(2))
-    if (cmd.length && isShellBin(cmd[0])) cmd = []
-    var row = { pid: pid }
-    if (cwd && cwd.charAt(0) === "/") row.cwd = cwd
-    if (cmd.length) row.cmd = cmd
-    out.push(row)
-  }
-  return out
-}
-
-function applyTerminalHints(stage, hints) {
-  if (!stage) return stage
-  var byPid = {}
-  var list = isArray(hints) ? hints : []
-  var i
-  for (i = 0; i < list.length; i++) {
-    if (list[i] && list[i].pid) byPid[Number(list[i].pid)] = list[i]
-  }
-  function stamp(win) {
-    if (!win || win.pid == null) return
-    var hint = byPid[Number(win.pid)]
-    if (!hint) return
-    if (hint.cwd) win.cwd = String(hint.cwd)
-    if (isChromiumClass(win)) {
-      var profile = hint.profile || profileFromArgv(hint.cmd)
-      if (profile) win.profile = profile
-      return
-    }
-    if (isArray(hint.cmd) && hint.cmd.length) win.cmd = copyStrings(hint.cmd)
-  }
-  var wins = stage.windows || []
-  for (i = 0; i < wins.length; i++) stamp(wins[i])
-  var parked = stage.parked || []
-  for (i = 0; i < parked.length; i++) stamp(parked[i])
-  var wss = stage.workspaces || []
-  var j
-  for (i = 0; i < wss.length; i++) {
-    var ww = (wss[i] && wss[i].windows) || []
-    for (j = 0; j < ww.length; j++) stamp(ww[j])
-  }
-  return stage
 }
 
 function parkedForSlug(stage, slug) {
@@ -2322,6 +1952,9 @@ function deskLife(desk, stage, currentId) {
   return liveWindows(desk, stage, currentId).length ? "live" : "dead"
 }
 
+// A desk is exactly the windows Hyprland is holding for it: the live numbered
+// workspaces when it is current, its parking lots otherwise. A desk with
+// neither still exists as a named row, it just has nothing to show.
 function deskPreviewSource(desk, stage, currentId) {
   var sizes = (stage && stage.monitorSizes) || (desk && desk.monitorSizes)
   if (isCurrentDesk(desk, currentId) && stage) {
@@ -2335,7 +1968,15 @@ function deskPreviewSource(desk, stage, currentId) {
     if (desk && desk.extras) src.extras = desk.extras
     return src
   }
-  return desk
+  return emptyPreviewSource(desk, sizes)
+}
+
+function emptyPreviewSource(desk, sizes) {
+  var src = { workspaces: [], windows: [], parked: [], lastWorkspace: null }
+  if (sizes) src.monitorSizes = sizes
+  if (desk && desk.extras) src.extras = desk.extras
+  if (desk && isArray(desk.layout)) src.layout = normalizeLayout(desk.layout)
+  return src
 }
 
 function closePlan(desk, stage, currentId) {
@@ -2351,111 +1992,8 @@ function closePlan(desk, stage, currentId) {
   return { slug: desk && desk.id ? String(desk.id) : "", dispatches: dispatches, batch: joinBatch(dispatches) }
 }
 
-function wakePlan(desk, stage, currentId) {
-  var here = isCurrentDesk(desk, currentId)
-  var source = here ? stage : { windows: [], parked: parkedForSlug(stage, desk && desk.id) }
-  var forced = {
-    id: desk && desk.id,
-    name: desk && desk.name,
-    extras: mergeExtras(defaultExtras(), { launchMissing: true }),
-    workspaces: deskWorkspaces(desk)
-  }
-  var launches = launchMissingPlan(forced, source)
-  var list = launches && launches.launches ? launches.launches : (isArray(launches) ? launches : [])
-  var layout = deskLayout(desk)
-  var byN = {}
-  var li
-  for (li = 0; li < layout.length; li++) byN[layout[li].n] = layout[li].monitor
-  var allow = monitorAllowSet(stage && stage.monitors)
-  var i
-  for (i = 0; i < list.length; i++) {
-    if (!here) list[i].workspace = parkSelector(sanitizeSlug(desk && desk.id), list[i].n)
-    var mon = pickConnectedMonitor(list[i].monitor || byN[list[i].n], allow)
-    if (mon) list[i].monitor = mon
-    else if (list[i].monitor) list[i].monitor = ""
-  }
-  list.launches = list.slice()
-  return list
-}
-
 function previewTiles(source, limit) {
   return deskTiles(source, limit)
-}
-
-function snapshotWorkspaces(stage) {
-  var out = []
-  if (!stage) return out
-  var wss = stage.workspaces
-  if ((!isArray(wss) || !wss.length) && stage.recipe && isArray(stage.recipe.workspaces)) {
-    wss = stage.recipe.workspaces
-  }
-  if (!isArray(wss) || !wss.length) {
-    var grouped = {}
-    var wins = stageWindows(stage)
-    var i
-    for (i = 0; i < wins.length; i++) {
-      var n = Number(wins[i].workspace)
-      if (n < 1 || n > 10) continue
-      if (!grouped[n]) grouped[n] = []
-      grouped[n].push(wins[i])
-    }
-    wss = []
-    for (n = 1; n <= 10; n++) {
-      if (grouped[n]) wss.push({ n: n, windows: grouped[n] })
-    }
-  }
-  var w
-  var j
-  for (w = 0; w < wss.length; w++) {
-    var n = Number(wss[w] && wss[w].n)
-    if (n < 1 || n > 10) continue
-    var windows = []
-    var list = (wss[w] && wss[w].windows) || []
-    for (j = 0; j < list.length; j++) {
-      if (isScratchpadish(list[j])) continue
-      windows.push(normalizeRecipeWindow(recipeFromStageWindow(list[j])))
-    }
-    var rec = { n: n, windows: windows }
-    var mon = safeMonitor(wss[w] && wss[w].monitor)
-    if (!mon && windows[0]) mon = safeMonitor(windows[0].monitor)
-    if (!mon && stage && isArray(stage.layout)) {
-      var li
-      for (li = 0; li < stage.layout.length; li++) {
-        if (stage.layout[li] && Number(stage.layout[li].n) === n) {
-          mon = safeMonitor(stage.layout[li].monitor)
-          break
-        }
-      }
-    }
-    if (mon) rec.monitor = mon
-    out.push(rec)
-  }
-  out.sort(function(a, b) { return a.n - b.n })
-  return out
-}
-
-function recipeFromStageWindow(w) {
-  var src = w || {}
-  return copyGeom({
-    address: src.address ? String(src.address) : "",
-    class: String(src.class || ""),
-    initialClass: String(src.initialClass || src.class || ""),
-    title: String(src.title || ""),
-    exec: isArray(src.exec) && src.exec.length ? copyStrings(src.exec) : guessExec(src),
-    floating: !!src.floating,
-    monitor: String(src.monitor || "")
-  }, src)
-}
-
-function recipeWindow(cls, title, exec) {
-  return {
-    class: cls,
-    initialClass: cls,
-    title: title,
-    exec: exec,
-    floating: false,
-    monitor: "DP-1"
-  }
 }
 
 function copyStrings(list) {
@@ -2553,42 +2091,6 @@ function parkedClientLot(client, slug) {
   var name = clientWorkspaceName(client)
   if (isScratchpadName(name)) return 0
   return lotNumberFromName(name, slug)
-}
-
-function asMatchClient(win, n) {
-  var id = Number(n)
-  if (!isFinite(id) && win && win.workspace != null) id = Number(win.workspace)
-  return {
-    address: win && win.address,
-    class: win && win.class,
-    initialClass: win && win.initialClass,
-    title: win && win.title,
-    workspace: { id: id, name: String(id) }
-  }
-}
-
-function clientsForMatch(value, desk) {
-  if (typeof value === "string") return parseJsonArg(value)
-  if (isArray(value)) return value
-  if (value && typeof value === "object") {
-    var out = []
-    var i
-    if (isArray(value.windows)) {
-      for (i = 0; i < value.windows.length; i++) {
-        out.push(asMatchClient(value.windows[i], value.windows[i].workspace))
-      }
-    }
-    if (isArray(value.parked)) {
-      var slug = sanitizeSlug(desk && (desk.id || desk.name) || "")
-      for (i = 0; i < value.parked.length; i++) {
-        var p = value.parked[i]
-        if (slug && p.slug && p.slug !== slug) continue
-        out.push(asMatchClient(p, p.n))
-      }
-    }
-    if (out.length) return out
-  }
-  return parseJsonArg(value)
 }
 
 function deskWorkspaces(desk) {

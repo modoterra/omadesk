@@ -24,7 +24,7 @@ Item {
   property string nameText: ""
   property var targetDesk: null
   property var extrasDesk: null
-  property var extrasDraft: ({ dnd: "leave", theme: "leave", launchMissing: true })
+  property var extrasDraft: ({ dnd: "leave", theme: "leave" })
   property var forgetDesk: null
   property var closeDesk: null
   property bool busy: false
@@ -37,7 +37,6 @@ Item {
   property var stageCallback: null
   property bool stageQueued: false
   property string batchPhase: ""
-  property var pendingLaunches: []
   property var pendingFocusWs: ""
   property var pendingDnd: ""
   property string switchToId: ""
@@ -90,8 +89,6 @@ Item {
     "       ||     ||",
     "      _||     ||_"
   ]
-
-  readonly property string termProbePy: "import os,sys\nSHELLS=set('bash zsh fish sh nu dash'.split())\ndef cmd(pid):\n  try:\n    raw=open('/proc/%d/cmdline'%pid,'rb').read().split(b'\\0')\n    return [a.decode('utf-8','replace') for a in raw if a]\n  except Exception:\n    return []\ndef cwd(pid):\n  try:\n    return os.readlink('/proc/%d/cwd'%pid)\n  except Exception:\n    return ''\ndef kids(pid):\n  try:\n    return [int(x) for x in open('/proc/%d/task/%d/children'%(pid,pid)).read().split()]\n  except Exception:\n    return []\ndef ppid(pid):\n  try:\n    for line in open('/proc/%d/status'%pid):\n      if line.startswith('PPid:'): return int(line.split()[1])\n  except Exception:\n    pass\n  return 0\ndef desc(pid):\n  out=[]; st=kids(pid); seen=set()\n  while st:\n    c=st.pop()\n    if c in seen: continue\n    seen.add(c); out.append(c); st.extend(kids(c))\n  return out\ndef bn(args):\n  if not args: return ''\n  return os.path.basename(args[0]).lower()\ndef pick_cmd(pid):\n  best=[]\n  for c in desc(pid):\n    a=cmd(c)\n    if a and bn(a) not in SHELLS: best=a\n  return best\ndef pick_cwd(pid):\n  d=cwd(pid)\n  q=kids(pid)\n  seen=set()\n  while q:\n    c=q.pop(0)\n    if c in seen: continue\n    seen.add(c)\n    x=cwd(c)\n    if x[:1]=='/': d=x\n    q.extend(kids(c))\n  return d\ndef browser(pid):\n  cur=pid; seen=set(); best=cmd(pid)\n  while cur and cur not in seen:\n    seen.add(cur); a=cmd(cur)\n    if a:\n      best=a\n      if '--type=' not in ' '.join(a): break\n    cur=ppid(cur)\n  return best\nfor pid in sys.argv[1:]:\n  try: p=int(pid)\n  except Exception: continue\n  a=cmd(p); name=bn(a); joined=' '.join(a).lower()\n  if 'chromium' in joined or 'chrome' in name or '--type=' in joined:\n    args=browser(p); d=cwd(p)\n  else:\n    args=pick_cmd(p); d=pick_cwd(p)\n  print('\\t'.join([str(p), d]+args))\n"
 
   function pluginId() {
     return (root.manifest && root.manifest.id) || "com.mdtrr.omadesk"
@@ -205,8 +202,16 @@ Item {
     if (emptyFile && root.debugDemo && typeof Model.demoDesks === "function") {
       try { next = Model.demoDesks() } catch (e) { next = next }
     }
+    // An older file is upgraded on read. Write it straight back so the stale
+    // window recipes leave the disk instead of being re-discarded every load.
+    var wasOlder = false
+    try {
+      var onDisk = JSON.parse(String(raw || "null"))
+      wasOlder = !!(onDisk && Number(onDisk.version) < Number(next.version))
+    } catch (e) { wasOlder = false }
     root.desksState = next
     root.rebuildCards()
+    if (wasOlder) root.persistDesks()
   }
 
   function persistDesks() {
@@ -240,8 +245,6 @@ Item {
 
   function extrasOf(desk) {
     var extras = (desk && desk.extras) ? desk.extras : ({})
-    var launch = extras.launchMissing
-    var launchYes = !(launch === false || launch === "no" || launch === "off")
     var dnd = extras.dnd
     if (dnd === true) dnd = "on"
     if (dnd === false) dnd = "off"
@@ -251,21 +254,18 @@ Item {
     else theme = String(theme)
     return {
       dnd: dnd,
-      theme: theme,
-      launchMissing: launchYes
+      theme: theme
     }
   }
 
   function patchExtras(patch) {
     var next = {
       dnd: root.extrasDraft && root.extrasDraft.dnd ? root.extrasDraft.dnd : "leave",
-      theme: root.extrasDraft && root.extrasDraft.theme ? root.extrasDraft.theme : "leave",
-      launchMissing: !(root.extrasDraft && root.extrasDraft.launchMissing === false)
+      theme: root.extrasDraft && root.extrasDraft.theme ? root.extrasDraft.theme : "leave"
     }
     if (patch) {
       if (patch.dnd !== undefined) next.dnd = patch.dnd
       if (patch.theme !== undefined) next.theme = patch.theme
-      if (patch.launchMissing !== undefined) next.launchMissing = patch.launchMissing
     }
     root.extrasDraft = next
   }
@@ -379,32 +379,6 @@ Item {
       try { return Model.iconLetters(app) } catch (e) {}
     }
     return "?"
-  }
-
-  function terminalPids(stage) {
-    var out = []
-    var seen = {}
-    function add(win) {
-      if (!win || win.pid == null) return
-      var want = false
-      if (typeof Model.isTerminalClass === "function") {
-        try { if (Model.isTerminalClass(win)) want = true } catch (e) {}
-      }
-      if (!want && typeof Model.isChromiumClass === "function") {
-        try { if (Model.isChromiumClass(win)) want = true } catch (e) {}
-      }
-      if (!want) return
-      var p = Number(win.pid)
-      if (!isFinite(p) || p < 1 || seen[p]) return
-      seen[p] = true
-      out.push(String(p))
-    }
-    var wins = (stage && stage.windows) || []
-    var i
-    for (i = 0; i < wins.length; i++) add(wins[i])
-    var parked = (stage && stage.parked) || []
-    for (i = 0; i < parked.length; i++) add(parked[i])
-    return out
   }
 
   function tilesFrom(source, limit) {
@@ -638,19 +612,19 @@ Item {
     return candidate
   }
 
-  function snapshotRecipe(name) {
-    if (typeof Model.snapshotRecipe === "function") {
+  function newDeskRow(name) {
+    if (typeof Model.newDeskRow === "function") {
       try {
-        return Model.snapshotRecipe(
+        return Model.newDeskRow(
           root.stage,
           name || "",
-          typeof Model.defaultExtras === "function" ? Model.defaultExtras() : ({ dnd: "leave", launchMissing: true }),
+          typeof Model.defaultExtras === "function" ? Model.defaultExtras() : ({ dnd: "leave", theme: "leave" }),
           root.stage && root.stage.lastWorkspace,
           new Date().toISOString()
         )
       } catch (e) { return null }
     }
-    return root.stage || null
+    return null
   }
 
   function assignState(next) {
@@ -790,25 +764,19 @@ Item {
     if (!name) return
     root.refreshStage(function(ok) {
       if (!ok) return
-      var recipe = root.snapshotRecipe(name)
-      if (!recipe || typeof recipe !== "object") {
-        recipe = { name: name, extras: { dnd: "leave", launchMissing: true }, lastUsed: Date.now() }
+      var row = root.newDeskRow(name)
+      if (!row || typeof row !== "object") {
+        row = { name: name, extras: { dnd: "leave", theme: "leave" }, lastUsed: Date.now() }
       } else {
-        recipe.name = name
+        row.name = name
       }
       var next = null
       if (typeof Model.saveDesk === "function") {
-        try { next = Model.saveDesk(root.desksState, recipe) } catch (e) { next = null }
+        try { next = Model.saveDesk(root.desksState, row) } catch (e) { next = null }
       }
       if (!next) {
         var id = root.uniqueDeskId(name)
-        var desk = recipe && recipe.workspaces ? recipe : {
-          id: id,
-          name: name,
-          recipe: recipe,
-          extras: { dnd: "leave", launchMissing: true },
-          lastUsed: Date.now()
-        }
+        var desk = row
         if (desk && typeof desk === "object") {
           desk.id = id
           desk.name = name
@@ -928,26 +896,15 @@ Item {
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
-  function updateHere() {
-    var id = root.desksState ? root.desksState.currentId : null
-    if (!id) return
-    root.refreshStage(function(ok) {
-      if (!ok) return
-      var next = null
-      if (typeof Model.updateDesk === "function") {
-        try { next = Model.updateDesk(root.desksState, id, root.stage, new Date().toISOString()) } catch (e) { next = null }
-      }
-      if (!next) {
-        next = Util.cloneJson(root.desksState || root.emptyState())
-        var desks = next.desks || []
-        for (var i = 0; i < desks.length; i++) {
-          if (String(desks[i].id) === String(id)) {
-            desks[i].lastUsed = Date.now()
-          }
-        }
-      }
-      root.assignState(next)
-    })
+  // Windows need no saving now, but a desk about to park has to remember which
+  // monitor each workspace was on, because lots do not carry that.
+  function rememberDeskLayout(deskId) {
+    if (!deskId || typeof Model.refreshDeskLayout !== "function") return
+    var next = null
+    try { next = Model.refreshDeskLayout(root.desksState, deskId, root.stage, new Date().toISOString()) } catch (e) { next = null }
+    if (!next) return
+    root.desksState = next
+    root.persistDesks()
   }
 
   function activateHighlighted() {
@@ -995,7 +952,7 @@ Item {
       try { next = Model.nextTiledLayout(current) } catch (e) { next = "scrolling" }
     }
     var argv = []
-    try { argv = Model.workspaceLayoutApplyArgv(root.layoutsDir, target, next, slug) || [] } catch (e) { argv = [] }
+    try { argv = Model.workspaceLayoutApplyArgv(root.layoutsDir, target, next) || [] } catch (e) { argv = [] }
     if (!argv.length) return
     if (layoutApplyProc.running) layoutApplyProc.running = false
     layoutApplyProc.command = argv
@@ -1012,16 +969,28 @@ Item {
     movePaneProc.running = true
   }
 
-  function applyWorkspaceMove(fromDeskId, fromN, toDeskId, toIndex) {
-    if (typeof Model.moveWorkspace !== "function") return
-    var next = null
-    try {
-      next = Model.moveWorkspace(root.desksState, fromDeskId, fromN, toDeskId, toIndex)
-    } catch (e) {
-      next = null
+  // Placement is Hyprland's. A drop moves real windows and then re-reads the
+  // compositor, so there is no stored order that can drift out of sync.
+  function applyWorkspaceMove(fromDeskId, fromN, toDeskId, toN) {
+    if (root.busy || moveWsProc.running) return
+    var currentId = root.desksState ? root.desksState.currentId : null
+    var fromHere = !!(currentId && String(currentId) === String(fromDeskId))
+    var toHere = !!(currentId && String(currentId) === String(toDeskId))
+    var plan = null
+    if (String(fromDeskId) === String(toDeskId)) {
+      if (toN == null || toN === "") return
+      if (typeof Model.swapWorkspacePlan !== "function") return
+      try { plan = Model.swapWorkspacePlan(root.stage, String(fromDeskId), fromHere, fromN, toN) } catch (e) { plan = null }
+    } else {
+      if (typeof Model.moveWorkspaceToDeskPlan !== "function") return
+      try {
+        plan = Model.moveWorkspaceToDeskPlan(root.stage, String(fromDeskId), fromHere, fromN, String(toDeskId), toHere)
+      } catch (e) { plan = null }
     }
-    if (!next) return
-    root.assignState(next)
+    var batch = root.batchString(plan)
+    if (!batch) return
+    moveWsProc.command = ["hyprctl", "--batch", batch]
+    moveWsProc.running = true
   }
 
   function focusWorkspaceNow(n) {
@@ -1093,7 +1062,6 @@ Item {
       root.pendingFocusN = null
       root.pendingDnd = ""
       root.pendingTheme = ""
-      root.pendingLaunches = []
       root.pendingDesk = null
       root.pendingPark = ""
       root.pendingRestore = restoreBatch
@@ -1174,22 +1142,21 @@ Item {
   function lastWorkspaceOf(desk, plan) {
     if (plan && plan.lastWorkspace !== undefined && plan.lastWorkspace !== null)
       return plan.lastWorkspace
-    if (desk && desk.recipe && desk.recipe.lastWorkspace !== undefined)
-      return desk.recipe.lastWorkspace
     if (desk && desk.lastWorkspace !== undefined) return desk.lastWorkspace
     if (root.stage && root.stage.lastWorkspace !== undefined) return root.stage.lastWorkspace
     return 1
   }
 
   function runParkRestore(fromSlug, toSlug, desk) {
-    // Two Chromiums on two workspaces work during the day because we move
-    // specific parked addresses. After reboot that case is best-effort
-    // (`--new-window` if we have it).
+    // Parking moves live windows into this desk's lots by address. Lots carry no
+    // monitor, so record the outgoing desk's workspace-to-monitor map first.
     if (typeof Model.parkPlan !== "function") {
       root.busy = false
       root.pendingFocusN = null
       return
     }
+    var leavingId = root.desksState ? root.desksState.currentId : null
+    if (leavingId && String(leavingId) !== String(toSlug)) root.rememberDeskLayout(leavingId)
     var plan = null
     try { plan = Model.parkPlan(root.stage, fromSlug, toSlug, desk) } catch (e) {
       root.busy = false
@@ -1222,7 +1189,6 @@ Item {
     root.pendingFocusN = null
     root.pendingDnd = ""
     root.pendingTheme = ""
-    root.pendingLaunches = []
     root.pendingDesk = desk || null
     if (desk) {
       var extras = root.extrasOf(desk)
@@ -1295,23 +1261,6 @@ Item {
   }
 
   function afterRestore() {
-    var desk = root.pendingDesk
-    var extras = desk ? root.extrasOf(desk) : null
-    if (desk && extras && extras.launchMissing) {
-      root.refreshStage(function(ok) {
-        root.pendingLaunches = []
-        if (ok && typeof Model.launchMissingPlan === "function") {
-          try {
-            var launches = Model.launchMissingPlan(desk, root.stage, desk.id)
-            if (launches && Array.isArray(launches.launches)) launches = launches.launches
-            root.pendingLaunches = Array.isArray(launches) ? launches : []
-          } catch (e) { root.pendingLaunches = [] }
-        }
-        root.runFocus()
-      })
-      return
-    }
-    root.pendingLaunches = []
     root.runFocus()
   }
 
@@ -1338,44 +1287,6 @@ Item {
     }
     focusProc.command = ["hyprctl", "dispatch", lua]
     focusProc.running = true
-  }
-
-  function launchMissing() {
-    var launches = Array.isArray(root.pendingLaunches) ? root.pendingLaunches : []
-    for (var i = 0; i < launches.length; i++) root.launchOne(launches[i])
-  }
-
-  function launchOne(item) {
-    if (!item) return
-    var argv = item.argv || item.args || []
-    if (typeof argv === "string") argv = [argv]
-    if ((!argv || !argv.length) && item.exec) {
-      if (Array.isArray(item.exec)) argv = item.exec
-      else argv = [String(item.exec)]
-    }
-    if (!argv || !argv.length) return
-    var cmd = "uwsm-app --"
-    for (var i = 0; i < argv.length; i++)
-      cmd += " " + Util.shellQuote(argv[i])
-    var execRules = ""
-    if (typeof Model.launchExecRules === "function") {
-      try { execRules = String(Model.launchExecRules(item) || "") } catch (e) { execRules = "" }
-    }
-    if (execRules) {
-      Quickshell.execDetached(["hyprctl", "dispatch", "exec", "[" + execRules + "]", "uwsm-app", "--"].concat(argv))
-      return
-    }
-    var ws = item.workspace !== undefined && item.workspace !== null ? String(item.workspace) : ""
-    var mon = item.monitor ? String(item.monitor) : ""
-    var rules = []
-    if (ws) rules.push("workspace = " + JSON.stringify(ws))
-    if (mon) rules.push("monitor = " + JSON.stringify(mon))
-    if (rules.length) {
-      var lua = "hl.dsp.exec_cmd(" + JSON.stringify(cmd) + ", { " + rules.join(", ") + " })"
-      Quickshell.execDetached(["hyprctl", "dispatch", lua])
-    } else {
-      Quickshell.execDetached(["uwsm-app", "--"].concat(argv))
-    }
   }
 
   function applyDnd() {
@@ -1408,7 +1319,6 @@ Item {
   }
 
   function finishSwitch() {
-    root.launchMissing()
     root.applyDnd()
     root.applyTheme()
     if (root.restoringUnsaved) {
@@ -1443,7 +1353,6 @@ Item {
     root.batchPhase = ""
     root.pendingPark = ""
     root.pendingRestore = ""
-    root.pendingLaunches = []
     root.pendingDnd = ""
     root.pendingTheme = ""
     root.pendingDesk = null
@@ -1497,16 +1406,7 @@ Item {
       }
     }
     root.stage = stage
-    var pids = root.terminalPids(stage)
-    if (!pids.length || termProbeProc.running) {
-      root.completeStage(true)
-      return
-    }
-    var cmd = ["python3", "-c", root.termProbePy]
-    var t
-    for (t = 0; t < pids.length; t++) cmd.push(pids[t])
-    termProbeProc.command = cmd
-    termProbeProc.running = true
+    root.completeStage(true)
   }
 
   function completeStage(ok) {
@@ -1585,9 +1485,6 @@ Item {
     } else if (!root.filterOpen && event.text === "n") {
       root.openSave()
       event.accepted = true
-    } else if (!root.filterOpen && event.text === "s") {
-      root.updateHere()
-      event.accepted = true
     } else if (!root.filterOpen && event.text === "r") {
       root.openRename()
       event.accepted = true
@@ -1653,6 +1550,13 @@ Item {
 
   Process {
     id: movePaneProc
+    onExited: function() {
+      root.refreshStage()
+    }
+  }
+
+  Process {
+    id: moveWsProc
     onExited: function() {
       root.refreshStage()
     }
@@ -1744,23 +1648,6 @@ Item {
   }
 
   Process {
-    id: termProbeProc
-    stdout: StdioCollector {
-      id: termProbeOut
-      waitForEnd: true
-    }
-    onExited: function(code) {
-      if (code === 0 && typeof Model.parseTerminalProbe === "function" && typeof Model.applyTerminalHints === "function") {
-        try {
-          var hints = Model.parseTerminalProbe(termProbeOut.text || "")
-          Model.applyTerminalHints(root.stage, hints)
-        } catch (e) {}
-      }
-      root.completeStage(true)
-    }
-  }
-
-  Process {
     id: themeListProc
     stdout: StdioCollector {
       id: themeListOut
@@ -1845,6 +1732,8 @@ Item {
     property bool paneDragging: false
     property bool workspaceDragging: false
     property string layoutOverride: ""
+    property real dragOriginX: 0
+    property real dragOriginY: 0
     readonly property string paneDragKey: tile.deskSlug ? "omadesk-pane-" + tile.deskSlug : ""
     readonly property string workspaceDragKey: "omadesk-ws"
     readonly property string fromDeskId: tile.deskSlug
@@ -1921,7 +1810,12 @@ Item {
     DropArea {
       id: wsDrop
       anchors.fill: parent
-      keys: tile.workspacesDraggable ? [tile.workspaceDragKey] : []
+      // While this tile is the drag source it sits under the cursor, so its own
+      // DropArea would steal every drop and reject it as "same workspace".
+      // Disable it for the duration of the drag so targets underneath receive it.
+      // Vacant tiles are not drag sources but must still accept drops.
+      enabled: tile.deskSlug !== "" && tile.deskSlug !== "unnamed" && !tile.workspaceDragging && (tile.workspacesDraggable || tile.vacant)
+      keys: ["omadesk-ws"]
       onEntered: function(drag) {
         var src = drag.source
         if (!src || String(src.fromDeskId) === "" || src.fromWorkspaceN == null) {
@@ -1973,18 +1867,36 @@ Item {
           preventStealing: tile.workspacesDraggable
           drag.target: tile.workspacesDraggable ? tile : undefined
           drag.threshold: 10
-          onPressed: if (tile.workspacesDraggable) tile.workspaceDragging = true
+          onPressed: {
+            if (!tile.workspacesDraggable) return
+            tile.dragOriginX = tile.x
+            tile.dragOriginY = tile.y
+            tile.workspaceDragging = true
+          }
           onReleased: {
-            if (tile.Drag.active)
+            // Prefer the MouseArea drag flag: the Drag.active binding can clear
+            // before onReleased runs, which would skip Drag.drop() entirely.
+            var dragging = wsHandle.drag.active || tile.Drag.active
+            if (dragging) {
+              // Drop while still dragging and while our DropArea stays disabled.
+              // Snapping or clearing workspaceDragging first cancels the drag and
+              // onDropped never runs (highlight was real; move was not).
               tile.Drag.drop()
-            else if (tile.clickable)
-              tile.activated()
-            tile.workspaceDragging = false
-            root.rebuildCards()
+              // Success rebuilds cards and destroys this tile. Failure leaves us
+              // here — snap home. Touching a destroyed tile only warns.
+              tile.workspaceDragging = false
+              tile.x = tile.dragOriginX
+              tile.y = tile.dragOriginY
+            } else {
+              tile.workspaceDragging = false
+              if (tile.clickable)
+                tile.activated()
+            }
           }
           onCanceled: {
             tile.workspaceDragging = false
-            root.rebuildCards()
+            tile.x = tile.dragOriginX
+            tile.y = tile.dragOriginY
           }
         }
 
@@ -2503,8 +2415,9 @@ Item {
                   var fromDesk = src && src.fromDeskId ? String(src.fromDeskId) : ""
                   var fromN = src ? src.fromWorkspaceN : null
                   var toDesk = String(card.id || "")
-                  if (fromDesk && fromN != null && toDesk)
-                    root.applyWorkspaceMove(fromDesk, fromN, toDesk)
+                  // No target workspace: the destination desk picks a free one.
+                  if (fromDesk && fromN != null && toDesk && fromDesk !== toDesk)
+                    root.applyWorkspaceMove(fromDesk, fromN, toDesk, null)
                   drop.acceptProposedAction()
                 }
 
@@ -2598,7 +2511,7 @@ Item {
                         root.movePaneOnDesk(address, fromN, modelData && modelData.n, isUnsaved ? "unnamed" : String(card.id || ""), isHere)
                       }
                       onWorkspaceDropped: function(fromDeskId, fromN) {
-                        root.applyWorkspaceMove(fromDeskId, fromN, String(card.id || ""), index)
+                        root.applyWorkspaceMove(fromDeskId, fromN, String(card.id || ""), modelData && modelData.n)
                       }
                       onActivated: {
                         root.cursorIndex = cardIndex
@@ -2797,19 +2710,6 @@ Item {
                 else root.beginThemePick()
               }
             }
-          }
-
-          PanelSeparator { foreground: root.foreground }
-
-          Toggle {
-            width: parent.width
-            label: "Launch Missing Windows"
-            description: "After a reboot, open the saved windows when you switch into this desk."
-            foreground: root.foreground
-            accent: root.accent
-            fontFamily: root.fontFamily
-            checked: !!(root.extrasDraft && root.extrasDraft.launchMissing)
-            onClicked: root.patchExtras({ launchMissing: !(root.extrasDraft && root.extrasDraft.launchMissing) })
           }
 
           Text {

@@ -155,7 +155,7 @@ test("6 readDesks invalid JSON fails; empty text is empty state", function() {
   assert.strictEqual(empty.ok, true)
   assert.strictEqual(empty.state.currentId, null)
   same(empty.state.desks, [])
-  assert.strictEqual(empty.state.version, 1)
+  assert.strictEqual(empty.state.version, 2)
   const ws = model.readDesks("  \n\t  ")
   assert.strictEqual(ws.ok, true)
   assert.strictEqual(ws.state.currentId, null)
@@ -165,9 +165,11 @@ test("6 readDesks invalid JSON fails; empty text is empty state", function() {
   same(missing.state, clone(model.emptyState()))
 })
 
-test("7 write/read round-trip; version required", function() {
-  const ver = model.readDesks(JSON.stringify({ version: 2, desks: [] }))
-  assert.strictEqual(ver.ok, false)
+test("7 write/read round-trip; version 1 and 2 accepted, others refused", function() {
+  // v1 is still readable so existing files upgrade instead of being rejected.
+  assert.strictEqual(model.readDesks(JSON.stringify({ version: 1, desks: [] })).ok, true)
+  assert.strictEqual(model.readDesks(JSON.stringify({ version: 2, desks: [] })).ok, true)
+  assert.strictEqual(model.readDesks(JSON.stringify({ version: 3, desks: [] })).ok, false)
   const noVer = model.readDesks(JSON.stringify({ desks: [] }))
   assert.strictEqual(noVer.ok, false)
   const demo = model.demoDesks()
@@ -176,28 +178,26 @@ test("7 write/read round-trip; version required", function() {
   const round = model.readDesks(written)
   assert.strictEqual(round.ok, true)
   same(round.state, clone(model.readDesks(model.writeDesks(round.state)).state))
-  assert.strictEqual(round.state.version, 1)
+  assert.strictEqual(round.state.version, 2)
   assert.strictEqual(round.state.currentId, "writing")
   assert.strictEqual(round.state.desks.length, 3)
 })
 
-test("8 snapshot does not store scratchpad", function() {
+test("8 a saved desk row stores no windows at all, scratchpad included", function() {
   const stage = model.parseStage(clientsText, workspacesText)
-  const recipe = model.snapshotRecipe(stage, "Writing", model.defaultExtras(), stage.lastWorkspace, "2026-08-19T16:40:00Z")
-  const blob = JSON.stringify(recipe)
+  const row = model.newDeskRow(stage, "Writing", model.defaultExtras(), stage.lastWorkspace, "2026-08-19T16:40:00Z")
+  const blob = JSON.stringify(row)
   assert.ok(blob.indexOf("scratchpad") === -1)
   assert.ok(blob.indexOf("special:") === -1)
-  recipe.workspaces.forEach((ws) => {
-    assert.ok(ws.n >= 1 && ws.n <= 10)
-  })
-  const addrs = []
-  recipe.workspaces.forEach((ws) => {
-    (ws.windows || []).forEach((w) => addrs.push(w.address || ""))
-  })
-  assert.ok(addrs.indexOf("0x55f11fe15aaa") === -1)
-  assert.ok(addrs.indexOf("0x55f11fe15bbb") === -1)
-  assert.strictEqual(recipe.id, "writing")
-  assert.strictEqual(recipe.lastWorkspace, 3)
+  // Nothing about windows is persisted, so no window can leak into the file.
+  assert.strictEqual(row.workspaces, undefined)
+  assert.ok(blob.indexOf("0x55f11fe15aaa") === -1)
+  assert.ok(blob.indexOf("0x55f11fe15bbb") === -1)
+  assert.ok(blob.indexOf("dev.zed.Zed") === -1)
+  assert.strictEqual(row.id, "writing")
+  assert.strictEqual(row.lastWorkspace, 3)
+
+  // Window arrays on a file being read are dropped rather than carried forward.
   const dirty = {
     version: 1,
     currentId: "writing",
@@ -218,11 +218,11 @@ test("8 snapshot does not store scratchpad", function() {
     }]
   }
   const cleaned = model.readDesks(model.writeDesks(dirty)).state
-  const wins = cleaned.desks[0].workspaces[0].windows
-  assert.strictEqual(wins.length, 1)
-  assert.strictEqual(wins[0].class, "dev.zed.Zed")
+  assert.strictEqual(cleaned.desks[0].workspaces, undefined)
+  assert.strictEqual(cleaned.desks[0].name, "Writing")
   assert.ok(JSON.stringify(cleaned).indexOf("scratchpad") === -1)
   assert.ok(JSON.stringify(cleaned).indexOf("foot") === -1)
+  assert.ok(JSON.stringify(cleaned).indexOf("dev.zed.Zed") === -1)
 })
 
 test("9 uniqueId duplicate names", function() {
@@ -282,51 +282,15 @@ test("11b freshPlan parks current and restores nothing", function() {
   assert.strictEqual(left.desks.length, 3)
 })
 
-test("12 match order address then class+workspace", function() {
-  const live = [
-    { address: "0xBBB", class: "Ghostty", initialClass: "Ghostty", workspace: { id: 1, name: "1" } },
-    { address: "0xAAA", class: "other", initialClass: "other", workspace: { id: 2, name: "2" } },
-    { address: "0xCCC", class: "Ghostty", initialClass: "Ghostty", workspace: { id: 1, name: "1" } }
-  ]
-  const byAddr = model.matchWindow({ address: "0xAAA", class: "Ghostty" }, live, [], 1)
-  assert.strictEqual(byAddr.address, "0xAAA")
-  const byClass = model.matchWindow({ class: "Ghostty" }, live, [], 1)
-  assert.strictEqual(byClass.address, "0xBBB")
-  const skipped = model.matchWindow({ class: "Ghostty" }, live, ["0xBBB"], 1)
-  assert.strictEqual(skipped.address, "0xCCC")
-})
-
-test("13 launchMissing skip when extras.launchMissing === false", function() {
-  const desk = {
-    extras: { dnd: "leave", launchMissing: false },
-    workspaces: [
-      { n: 1, windows: [{ class: "dev.zed.Zed", title: "charcana", exec: ["zed"] }] }
-    ]
-  }
-  same(model.launchMissingPlan(desk, "[]").launches, [])
-  const on = {
-    extras: model.defaultExtras(),
-    workspaces: [
-      { n: 1, windows: [{ class: "dev.zed.Zed", title: "charcana", exec: ["zed"] }] }
-    ]
-  }
-  const launched = model.launchMissingPlan(on, "[]").launches
-  assert.strictEqual(launched.length, 1)
-  assert.strictEqual(launched[0].n, 1)
-  same(launched[0].exec, ["zed"])
-})
-
-test("14 updateDesk keeps id/name/extras", function() {
+test("14 refreshDeskLayout keeps id, name and extras", function() {
   const state = model.demoDesks()
   const stage = model.parseStage(clientsText, workspacesText)
-  const next = model.updateDesk(state, "call", stage, "2026-08-19T17:00:00Z")
+  const next = model.refreshDeskLayout(state, "call", stage, "2026-08-19T17:00:00Z")
   const call = next.desks.filter((d) => d.id === "call")[0]
   assert.strictEqual(call.id, "call")
   assert.strictEqual(call.name, "Call")
   assert.strictEqual(call.extras.dnd, "on")
-  assert.strictEqual(call.extras.launchMissing, true)
   assert.strictEqual(call.updatedAt, "2026-08-19T17:00:00Z")
-  assert.strictEqual(call.lastWorkspace, 3)
   assert.strictEqual(state.desks.filter((d) => d.id === "call")[0].name, "Call")
 })
 
@@ -349,9 +313,9 @@ test("16 forgetDesk removes recipe only", function() {
   assert.strictEqual(gone.desks.length, 2)
 })
 
-test("17 default extras launchMissing true, dnd leave, theme leave", function() {
+test("17 default extras are dnd leave and theme leave, nothing about launching", function() {
   const extras = model.defaultExtras()
-  assert.strictEqual(extras.launchMissing, true)
+  assert.strictEqual(extras.launchMissing, undefined)
   assert.strictEqual(extras.dnd, "leave")
   assert.strictEqual(extras.theme, "leave")
   assert.strictEqual(model.dndAction(extras), null)
@@ -396,39 +360,13 @@ test("19 sanitizeSlug rejects slashes", function() {
   assert.strictEqual(model.parkLotName("omadesk-call", 2), "omadesk-call-2")
 })
 
-test("20 extras helpers, cards, currentSlug, guessExec", function() {
+test("20 extras helpers, cards, currentSlug", function() {
   assert.strictEqual(model.currentSlug({ currentId: null }), "unnamed")
   assert.strictEqual(model.currentSlug(model.demoDesks()), "writing")
-  same(model.guessExec({ class: "dev.zed.Zed" }), ["zed"])
-  same(model.guessExec({ class: "Zed" }), ["zed"])
-  same(model.guessExec({ class: "com.mitchellh.ghostty" }), ["ghostty"])
-  same(model.guessExec({ class: "chromium" }), ["chromium", "--new-window"])
-  same(model.guessExec({ class: "GeForceNOW" }), ["gtk-launch", "com.nvidia.geforcenow.desktop"])
-  same(
-    model.guessExec({ class: "chrome-x.com__-Profile_1" }),
-    ["chromium", "--profile-directory=Profile 1", "--app=https://x.com"]
-  )
-  same(model.guessExec({ class: "chrome-x.com__-Profile_1" }).indexOf("com__-profile_1"), -1)
-  same(model.guessExec({ class: "mpv" }), ["mpv"])
-  assert.strictEqual(model.guessExec({ class: "chrome-x.com__-Profile_1", exec: ["com__-profile_1"] }).join(" "),
-    "chromium --profile-directory=Profile 1 --app=https://x.com")
-  same(
-    model.resolveExec({ class: "GeForceNOW", exec: ["geforcenow"] }),
-    ["gtk-launch", "com.nvidia.geforcenow.desktop"]
-  )
-  const missing = model.launchMissingPlan({
-    extras: model.defaultExtras(),
-    workspaces: [{
-      n: 2,
-      windows: [{ class: "chrome-x.com__-Profile_1", title: "X", exec: ["com__-profile_1"] }]
-    }]
-  }, "[]")
-  same(missing.launches[0].exec, ["chromium", "--profile-directory=Profile 1", "--app=https://x.com"])
   const cards = model.pickerCards(model.demoDesks(), "")
   assert.strictEqual(cards[0].kind, "desk")
   assert.strictEqual(cards[0].id, "writing")
   assert.strictEqual(cards[0].here, true)
-  assert.strictEqual(cards[0].tiles[0].label, "Zed · charcana")
   assert.strictEqual(cards.filter((c) => c.kind === "new").length, 0)
   const filtered = model.pickerCards(model.demoDesks(), "ca")
   assert.strictEqual(filtered[0].name, "Call")
@@ -446,7 +384,7 @@ test("20 extras helpers, cards, currentSlug, guessExec", function() {
   const writing = merged.desks.filter((d) => d.id === "writing")[0]
   assert.strictEqual(writing.extras.dnd, "off")
   assert.strictEqual(writing.extras.theme, "Dazzle Dusk")
-  const saved = model.saveDesk(model.emptyState(), model.snapshotRecipe(
+  const saved = model.saveDesk(model.emptyState(), model.newDeskRow(
     model.parseStage(clientsText, workspacesText),
     "Writing",
     model.defaultExtras(),
@@ -469,31 +407,6 @@ test("20 extras helpers, cards, currentSlug, guessExec", function() {
 function isArray(value) {
   return Array.isArray(value)
 }
-
-test("21 launchMissing after restore, not the pre-park other desk", function() {
-  const desk = {
-    extras: model.defaultExtras(),
-    workspaces: [{
-      n: 1,
-      windows: [{ class: "chromium", title: "Meet", exec: ["chromium", "--new-window"] }]
-    }]
-  }
-  const otherDeskOnStage = {
-    windows: [{ address: "0xAAA", class: "chromium", title: "draft", workspace: 1 }],
-    parked: []
-  }
-  const skipped = model.launchMissingPlan(desk, otherDeskOnStage).launches
-  assert.strictEqual(skipped.length, 0)
-  const postRestoreMissing = { windows: [], parked: [] }
-  const launched = model.launchMissingPlan(desk, postRestoreMissing).launches
-  assert.strictEqual(launched.length, 1)
-  same(launched[0].exec, ["chromium", "--new-window"])
-  const postRestorePresent = {
-    windows: [{ address: "0xBBB", class: "chromium", title: "Meet", workspace: 1 }],
-    parked: []
-  }
-  same(model.launchMissingPlan(desk, postRestorePresent).launches, [])
-})
 
 test("22 forgetRestorePlan moves parked windows onto 1-10", function() {
   const plan = model.forgetRestorePlan(clientsText, { id: "call", name: "Call" })
@@ -544,22 +457,11 @@ test("23 unsaved card and +new parks to unnamed lots", function() {
   })
 })
 
-test("24 broader exec guesses and gtk-launch desktop ids", function() {
-  same(model.guessExec({ class: "org.gnome.Nautilus" }), ["gtk-launch", "org.gnome.Nautilus.desktop"])
-  same(model.guessExec({ class: "org.mozilla.firefox" }), ["gtk-launch", "org.mozilla.firefox.desktop"])
-  same(model.guessExec({ class: "com.obsproject.Studio" }), ["gtk-launch", "com.obsproject.Studio.desktop"])
-  same(model.guessExec({ class: "firefox" }), ["firefox"])
-  same(model.guessExec({ class: "steam" }), ["steam"])
-  same(model.guessExec({ class: "cursor" }), ["cursor"])
-  same(
-    model.resolveExec({ class: "org.gnome.Nautilus", exec: ["nautilus"] }),
-    ["gtk-launch", "org.gnome.Nautilus.desktop"]
-  )
-  assert.ok(model.isDesktopIdClass("org.gnome.Nautilus"))
-  assert.ok(!model.isDesktopIdClass("chromium"))
+test("24 pretty names still read well for desktop ids and PWA classes", function() {
   assert.strictEqual(model.prettyApp({ class: "chrome-x.com__-Profile_1" }), "x.com")
   assert.strictEqual(model.prettyApp({ class: "GeForceNOW" }), "GeForce NOW")
   assert.strictEqual(model.prettyApp({ class: "dev.zed.Zed" }), "Zed")
+  assert.strictEqual(model.prettyApp({ class: "org.gnome.Nautilus" }), "Files")
 })
 
 test("25 last used follows switch, not last save; here is now", function() {
@@ -602,8 +504,16 @@ test("25 last used follows switch, not last save; here is now", function() {
 })
 
 test("26 tiles only include workspaces that have windows", function() {
-  const writing = model.demoDesks().desks[0]
-  const tiles = model.deskTiles(writing)
+  // A desk row carries no windows, so tiles come from a live or parked source.
+  same(model.deskTiles(model.demoDesks().desks[0]), [])
+  const live = {
+    workspaces: [
+      { n: 1, windows: [{ class: "dev.zed.Zed", title: "charcana" }] },
+      { n: 2, windows: [{ class: "com.mitchellh.ghostty", title: "" }] },
+      { n: 3, windows: [{ class: "chromium", title: "draft" }] }
+    ]
+  }
+  const tiles = model.deskTiles(live)
   assert.strictEqual(tiles.length, 3)
   assert.strictEqual(tiles[0].label, "Zed · charcana")
   tiles.forEach((t) => { assert.strictEqual(t.vacant, false) })
@@ -631,7 +541,7 @@ test("26 tiles only include workspaces that have windows", function() {
   assert.ok(stacked[0].label.indexOf("Chromium") >= 0)
 })
 
-test("27 live vs dead, closePlan, wakePlan parks in the background", function() {
+test("27 live vs dead and closePlan", function() {
   const demo = model.demoDesks()
   const stage = model.parseStage(clientsText, workspacesText)
   assert.strictEqual(model.deskLife(demo.desks[0], stage, "writing"), "live")
@@ -651,18 +561,6 @@ test("27 live vs dead, closePlan, wakePlan parks in the background", function() 
   closeCall.dispatches.forEach((lua) => {
     assert.ok(lua.indexOf("0x55f11fe15aaa") === -1)
   })
-  const wakeReview = model.wakePlan(demo.desks.filter((d) => d.id === "review")[0], stage, "writing")
-  assert.ok(wakeReview.launches.length >= 1)
-  wakeReview.launches.forEach((item) => {
-    assert.ok(String(item.workspace).indexOf("special:omadesk-review-") === 0)
-  })
-  const wakeHere = model.wakePlan({
-    id: "writing",
-    extras: model.defaultExtras(),
-    workspaces: [{ n: 8, windows: [{ class: "mpv", exec: ["mpv"] }] }]
-  }, stage, "writing")
-  assert.strictEqual(wakeHere.launches[0].n, 8)
-  assert.strictEqual(wakeHere.launches[0].workspace, "8")
   assert.strictEqual(
     model.closeDispatch("0xABC"),
     'hl.dsp.window.close({ window = "address:0xABC" })'
@@ -683,19 +581,16 @@ test("28 restore puts workspaces back on their monitors", function() {
   assert.strictEqual(stage.layout[1].monitor, "HDMI-A-1")
   assert.ok(stage.monitors.indexOf("HDMI-A-1") >= 0)
   assert.strictEqual(stage.lastWorkspace, 1)
-  const recipe = model.snapshotRecipe(stage, "Dual", model.defaultExtras(), stage.lastWorkspace, "2026-08-20T22:00:00Z")
-  assert.strictEqual(recipe.layout.length, 2)
-  assert.strictEqual(recipe.workspaces.filter((w) => w.n === 1)[0].monitor, "DP-1")
+  // A desk row keeps the monitor map even though it keeps no windows.
+  const row = model.newDeskRow(stage, "Dual", model.defaultExtras(), stage.lastWorkspace, "2026-08-20T22:00:00Z")
+  assert.strictEqual(row.layout.length, 2)
+  assert.strictEqual(row.workspaces, undefined)
   const desk = {
     id: "dual",
     name: "Dual",
     layout: [
       { n: 1, monitor: "DP-1", focused: true },
       { n: 4, monitor: "HDMI-A-1" }
-    ],
-    workspaces: [
-      { n: 1, monitor: "DP-1", windows: [{ class: "dev.zed.Zed", address: "0x1" }] },
-      { n: 4, monitor: "HDMI-A-1", windows: [{ class: "chromium", address: "0x4" }] }
     ]
   }
   const parked = {
@@ -720,12 +615,8 @@ test("28 restore puts workspaces back on their monitors", function() {
     model.workspaceMoveDispatch("4", "HDMI-A-1"),
     'hl.dsp.workspace.move({ workspace = "4", monitor = "HDMI-A-1" })'
   )
-  const cards = model.pickerCards({ version: 1, currentId: "dual", desks: [desk] }, "")
+  const cards = model.pickerCards({ version: 2, currentId: "dual", desks: [desk] }, "")
   assert.ok(cards[0].meta.indexOf("2 Screens") >= 0)
-  const woke = model.wakePlan(desk, { windows: [], parked: [], monitors: ["DP-1", "HDMI-A-1"] }, "writing")
-  const onHdmi = woke.launches.filter((item) => String(item.workspace).indexOf("omadesk-dual-4") >= 0)[0]
-  assert.ok(onHdmi)
-  assert.strictEqual(onHdmi.monitor, "HDMI-A-1")
 })
 
 test("29 forgetRestorePlan unparks only that desk onto 1-10, never layout", function() {
@@ -894,13 +785,13 @@ test("34 empty and invalid parseStage yield an empty stage", function() {
 test("35 saveDesk uniquifies a second desk with the same display name", function() {
   const stage = model.parseStage(clientsText, workspacesText)
   const extras = model.defaultExtras()
-  const firstRecipe = model.snapshotRecipe(stage, "Writing", extras, 3, "2026-08-20T22:00:00Z")
-  const first = model.saveDesk(model.emptyState(), firstRecipe)
+  const firstRow = model.newDeskRow(stage, "Writing", extras, 3, "2026-08-20T22:00:00Z")
+  const first = model.saveDesk(model.emptyState(), firstRow)
   assert.strictEqual(first.desks.length, 1)
   const firstId = first.desks[0].id
   assert.ok(firstId)
-  const secondRecipe = model.snapshotRecipe(stage, "Writing", extras, 3, "2026-08-20T22:01:00Z")
-  const second = model.saveDesk(first, secondRecipe)
+  const secondRow = model.newDeskRow(stage, "Writing", extras, 3, "2026-08-20T22:01:00Z")
+  const second = model.saveDesk(first, secondRow)
   assert.strictEqual(second.desks.length, 2)
   assert.strictEqual(second.desks[0].id, firstId)
   assert.strictEqual(second.desks[0].name, "Writing")
@@ -908,7 +799,7 @@ test("35 saveDesk uniquifies a second desk with the same display name", function
   assert.ok(second.desks[1].id)
   assert.ok(second.desks[0].id !== second.desks[1].id)
   assert.strictEqual(second.currentId, second.desks[1].id)
-  const again = model.saveDesk(first, firstRecipe)
+  const again = model.saveDesk(first, firstRow)
   assert.strictEqual(again.desks[0].id, firstId)
   assert.ok(again.desks[1].id !== firstId)
 })
@@ -954,7 +845,7 @@ test("36 empty connected monitors emit no workspace.move; missing display still 
   })
 })
 
-test("37 unnamed close skips named lots and scratchpad; wake still parks in the background", function() {
+test("37 unnamed close skips named lots and scratchpad", function() {
   const stage = model.parseStage(clientsText, workspacesText)
   stage.parked = (stage.parked || []).concat([{
     slug: "unnamed",
@@ -987,12 +878,6 @@ test("37 unnamed close skips named lots and scratchpad; wake still parks in the 
     assert.ok(lua.indexOf("scratchpad") === -1)
     assert.ok(lua.indexOf("0x55f11fe15aaa") === -1)
   })
-  const review = model.demoDesks().desks.filter((d) => d.id === "review")[0]
-  const wake = model.wakePlan(review, stage, "writing")
-  assert.ok(wake.launches.length >= 1)
-  wake.launches.forEach((item) => {
-    assert.ok(String(item.workspace).indexOf("special:omadesk-review-") === 0)
-  })
 })
 
 test("38 disabled monitors are omitted from layout and connected names", function() {
@@ -1019,18 +904,6 @@ test("38 disabled monitors are omitted from layout and connected names", functio
   assert.ok(layouts[0].indexOf("HDMI") === -1)
 })
 
-test("39 unknown window class is not launched as a command", function() {
-  same(model.guessExec({ class: "TotallyUnknownApp" }), [])
-  same(model.resolveExec({ class: "TotallyUnknownApp" }), [])
-  same(model.resolveExec({ class: "TotallyUnknownApp", exec: ["TotallyUnknownApp"] }), [])
-  const launched = model.launchMissingPlan({
-    extras: model.defaultExtras(),
-    workspaces: [{ n: 1, windows: [{ class: "TotallyUnknownApp", title: "mystery" }] }]
-  }, "[]")
-  same(launched.launches, [])
-  same(model.guessExec({ class: "mpv" }), ["mpv"])
-})
-
 test("40 saved desks never take the unnamed parking id", function() {
   assert.strictEqual(model.uniqueId("unnamed", []), "unnamed-2")
   assert.strictEqual(model.uniqueId("Unnamed", ["writing"]), "unnamed-2")
@@ -1039,7 +912,7 @@ test("40 saved desks never take the unnamed parking id", function() {
   assert.strictEqual(model.uniqueId("writing", []), "writing")
   const stage = model.parseStage(clientsText, workspacesText)
   const extras = model.defaultExtras()
-  const saved = model.saveDesk(model.emptyState(), model.snapshotRecipe(stage, "Unnamed", extras, 3, "2026-08-21T12:00:00Z"))
+  const saved = model.saveDesk(model.emptyState(), model.newDeskRow(stage, "Unnamed", extras, 3, "2026-08-21T12:00:00Z"))
   const id = saved.desks[0].id
   assert.ok(id)
   assert.notStrictEqual(id, "unnamed")
@@ -1283,42 +1156,6 @@ test("45 empty here with unnamed lots is a parked unsaved room, not a live empty
   assert.strictEqual(parkedWhileNamed.filter((c) => c.kind === "unsaved")[0].here, false)
 })
 
-test("46 wake and launchMissing skip a missing display, still launch the window", function() {
-  const desk = {
-    id: "dual",
-    extras: model.defaultExtras(),
-    layout: [
-      { n: 1, monitor: "DP-1", focused: true },
-      { n: 4, monitor: "HDMI-A-1" }
-    ],
-    workspaces: [
-      { n: 1, monitor: "DP-1", windows: [{ class: "dev.zed.Zed", exec: ["zed"] }] },
-      { n: 4, monitor: "HDMI-A-1", windows: [{ class: "chromium", exec: ["chromium", "--new-window"] }] }
-    ]
-  }
-  const laptop = { windows: [], parked: [], monitors: ["DP-1"] }
-  const woke = model.wakePlan(desk, laptop, "writing")
-  const onLaptop = woke.launches.filter((item) => String(item.workspace).indexOf("omadesk-dual-1") >= 0)[0]
-  const onHdmi = woke.launches.filter((item) => String(item.workspace).indexOf("omadesk-dual-4") >= 0)[0]
-  assert.ok(onLaptop)
-  assert.ok(onHdmi)
-  assert.strictEqual(onLaptop.monitor, "DP-1")
-  assert.ok(!onHdmi.monitor)
-  assert.ok(String(onHdmi.workspace).indexOf("omadesk-dual-4") >= 0)
-  same(onHdmi.exec, ["chromium", "--new-window"])
-  const emptyConn = model.wakePlan(desk, { windows: [], parked: [], monitors: [] }, "writing")
-  emptyConn.launches.forEach((item) => {
-    assert.ok(!item.monitor)
-  })
-  const both = model.wakePlan(desk, { windows: [], parked: [], monitors: ["DP-1", "HDMI-A-1"] }, "writing")
-  const hdmiBoth = both.launches.filter((item) => String(item.workspace).indexOf("omadesk-dual-4") >= 0)[0]
-  assert.strictEqual(hdmiBoth.monitor, "HDMI-A-1")
-  const launched = model.launchMissingPlan(desk, laptop).launches
-  const hdmiLaunch = launched.filter((item) => String(item.n) === "4")[0]
-  assert.ok(hdmiLaunch)
-  assert.ok(!hdmiLaunch.monitor)
-})
-
 test("47 windowPanes follow dwindle and scrolling geometry; icons not names", function() {
   const scroll = model.windowPanes([
     { class: "foot", at: [0, 0], size: [400, 800] },
@@ -1347,10 +1184,10 @@ test("47 windowPanes follow dwindle and scrolling geometry; icons not names", fu
   assert.ok(tiles[0].panes[0].icon)
   assert.strictEqual(model.iconName({ class: "dev.zed.Zed" }), "zed")
   assert.strictEqual(model.iconName({ class: "chrome-music.apple.com__-Profile_1" }), "chromium")
-  const recipe = model.snapshotRecipe(stage, "Geom", model.defaultExtras(), 3, "2026-08-21T18:00:00Z")
-  const zed = recipe.workspaces[0].windows[0]
+  // Geometry and icons come off the live stage, which is the only source now.
+  const zed = stage.workspaces[0].windows[0]
   assert.ok(zed.w > 0)
-  assert.ok(zed.icon)
+  assert.ok(model.iconName(zed))
   const covered = model.windowPanes([
     { class: "foot", x: 0, y: 0, w: 400, h: 400 },
     { class: "com.mitchellh.ghostty", x: 0, y: 400, w: 400, h: 400 },
@@ -1394,81 +1231,6 @@ test("49 iconLetters: one word first+last, two words initials", function() {
   assert.strictEqual(model.iconLetters({ class: "GeForceNOW" }), "GN")
   assert.strictEqual(model.iconLetters({ class: "chrome-music.apple.com__-Profile_1" }), "MA")
   assert.strictEqual(model.iconLetters({ class: "X" }), "X")
-})
-
-test("48 terminal exec keeps cwd and a non-shell command", function() {
-  same(
-    model.terminalExec({
-      class: "com.mitchellh.ghostty",
-      cwd: "/home/hallas/Work/charcana",
-      cmd: ["nvim", "README.md"]
-    }),
-    ["ghostty", "--working-directory=/home/hallas/Work/charcana", "-e", "nvim", "README.md"]
-  )
-  same(
-    model.terminalExec({ class: "foot", cwd: "/tmp", cmd: ["bash"] }),
-    ["foot", "-D", "/tmp"]
-  )
-  same(
-    model.resolveExec({
-      class: "com.mitchellh.ghostty",
-      exec: ["ghostty"],
-      cwd: "/home/hallas/Work",
-      cmd: ["htop"]
-    }),
-    ["ghostty", "--working-directory=/home/hallas/Work", "-e", "htop"]
-  )
-  const hints = model.parseTerminalProbe("1102\t/home/hallas/Work/omadesk\thtop\n1101\t/home/hallas\tbash\n")
-  assert.strictEqual(hints[0].pid, 1102)
-  assert.strictEqual(hints[0].cwd, "/home/hallas/Work/omadesk")
-  same(hints[0].cmd, ["htop"])
-  assert.strictEqual(hints[1].pid, 1101)
-  assert.ok(!hints[1].cmd)
-  const stage = {
-    windows: [
-      { pid: 1102, class: "com.mitchellh.ghostty", workspace: 2, address: "0x1" }
-    ],
-    workspaces: [{ n: 2, windows: [{ pid: 1102, class: "com.mitchellh.ghostty", workspace: 2, address: "0x1" }] }]
-  }
-  model.applyTerminalHints(stage, hints)
-  assert.strictEqual(stage.windows[0].cwd, "/home/hallas/Work/omadesk")
-  same(stage.windows[0].cmd, ["htop"])
-  const recipe = model.snapshotRecipe(stage, "Term", model.defaultExtras(), 2, "2026-08-21T18:00:00Z")
-  const win = recipe.workspaces[0].windows[0]
-  assert.strictEqual(win.cwd, "/home/hallas/Work/omadesk")
-  same(win.cmd, ["htop"])
-  same(win.exec[0], "ghostty")
-  assert.ok(win.exec.indexOf("-e") >= 0)
-  const launched = model.launchMissingPlan({
-    extras: model.defaultExtras(),
-    workspaces: recipe.workspaces
-  }, "[]").launches
-  assert.strictEqual(launched.length, 1)
-  assert.ok(launched[0].exec.indexOf("htop") >= 0)
-})
-
-test("58 idle terminal still stores cwd and relaunches there", function() {
-  const stage = {
-    windows: [
-      { pid: 9, class: "com.mitchellh.ghostty", workspace: 1, address: "0xterm" }
-    ],
-    workspaces: [{
-      n: 1,
-      windows: [{ pid: 9, class: "com.mitchellh.ghostty", workspace: 1, address: "0xterm" }]
-    }]
-  }
-  model.applyTerminalHints(stage, [{ pid: 9, cwd: "/home/hallas/Work/omadesk" }])
-  assert.strictEqual(stage.windows[0].cwd, "/home/hallas/Work/omadesk")
-  const recipe = model.snapshotRecipe(stage, "Term", model.defaultExtras(), 1, "2026-08-22T12:00:00Z")
-  const win = recipe.workspaces[0].windows[0]
-  assert.strictEqual(win.cwd, "/home/hallas/Work/omadesk")
-  assert.ok(!win.cmd)
-  const launched = model.launchMissingPlan({
-    extras: model.defaultExtras(),
-    workspaces: recipe.workspaces
-  }, "[]").launches
-  assert.strictEqual(launched.length, 1)
-  same(launched[0].exec, ["ghostty", "--working-directory=/home/hallas/Work/omadesk"])
 })
 
 test("50 minimap aspect matches the monitor", function() {
@@ -1614,16 +1376,8 @@ test("54 park hides leftover lots of the outgoing desk, not call or unsaved", fu
   assert.ok(writingRestore.indexOf("0xhere01") === -1)
 })
 
-test("55 switch does not relaunch closed windows of a live desk", function() {
-  const desk = {
-    id: "writing",
-    extras: model.defaultExtras(),
-    workspaces: [
-      { n: 1, windows: [{ class: "dev.zed.Zed", exec: ["zed"] }] },
-      { n: 2, windows: [{ class: "com.mitchellh.ghostty", exec: ["ghostty"] }] },
-      { n: 3, windows: [{ class: "chromium", exec: ["chromium", "--new-window"] }] }
-    ]
-  }
+test("55 a desk's live windows are its own, parked leaks included", function() {
+  const desk = { id: "writing", extras: model.defaultExtras() }
   const livePartial = {
     windows: [
       { address: "0xzed", workspace: 1, class: "dev.zed.Zed" },
@@ -1631,32 +1385,28 @@ test("55 switch does not relaunch closed windows of a live desk", function() {
     ],
     parked: [{ slug: "call", n: 1, address: "0xcall01", class: "chromium" }]
   }
-  const twoArg = model.launchMissingPlan(desk, livePartial).launches
-  assert.strictEqual(twoArg.length, 1)
-  same(twoArg[0].exec, ["chromium", "--new-window"])
-  same(model.launchMissingPlan(desk, livePartial, "writing").launches, [])
-  const leakedLive = {
+  // While current, the desk owns the live workspaces and not another desk's lot.
+  const mine = model.liveWindows(desk, livePartial, "writing")
+  assert.strictEqual(mine.length, 2)
+  assert.strictEqual(mine.filter((w) => w.address === "0xcall01").length, 0)
+  assert.strictEqual(model.deskLife(desk, livePartial, "writing"), "live")
+
+  // A window of ours left behind in a lot still counts as ours.
+  const leaked = {
     windows: [],
     parked: [
       { slug: "writing", n: 1, address: "0xzed", class: "dev.zed.Zed" },
       { slug: "call", n: 1, address: "0xcall01", class: "chromium" }
     ]
   }
-  same(model.launchMissingPlan(desk, leakedLive, "writing").launches, [])
-  const dead = {
-    windows: [],
-    parked: [{ slug: "call", n: 1, address: "0xcall01", class: "chromium" }]
-  }
-  const fromDead = model.launchMissingPlan(desk, dead, "writing").launches
-  assert.strictEqual(fromDead.length, 3)
-  fromDead.forEach((item) => {
-    assert.ok(item.exec && item.exec.length)
-  })
-  const woke = model.wakePlan(desk, livePartial, "call")
-  assert.ok(woke.launches.length >= 1)
-  woke.launches.forEach((item) => {
-    assert.ok(String(item.workspace).indexOf("special:omadesk-writing-") === 0)
-  })
+  const withLeak = model.liveWindows(desk, leaked, "writing")
+  assert.strictEqual(withLeak.length, 1)
+  assert.strictEqual(withLeak[0].address, "0xzed")
+
+  // Not current and holding nothing means dead, with no recipe to fall back on.
+  const elsewhere = { windows: [], parked: [{ slug: "call", n: 1, address: "0xcall01" }] }
+  same(model.liveWindows(desk, elsewhere, "call"), [])
+  assert.strictEqual(model.deskLife(desk, elsewhere, "call"), "dead")
 })
 
 test("56 unnamed currentId and unnamed desk id are the unsaved room", function() {
@@ -1748,100 +1498,49 @@ test("52 live tiles use n not id and skip empty workspaces", function() {
   assert.strictEqual(hypr.workspaces[0].windows, 1)
 })
 
-test("57 reboot restore keeps chromium profile, terminal cwd, and floating size", function() {
-  assert.strictEqual(
-    model.profileFromArgv(["chromium", "--profile-directory=Profile 1", "--type=renderer"]),
-    "Profile 1"
-  )
-  same(model.guessExec({ class: "chromium" }), ["chromium", "--new-window"])
-  same(
-    model.guessExec({ class: "chromium", profile: "Profile 1" }),
-    ["chromium", "--profile-directory=Profile 1", "--new-window"]
-  )
-  const stage = {
-    windows: [
-      {
-        pid: 10,
-        class: "chromium",
-        workspace: 2,
-        floating: true,
-        x: 100,
-        y: 80,
-        w: 1280,
-        h: 800,
-        address: "0xa"
-      },
-      {
-        pid: 11,
-        class: "com.mitchellh.ghostty",
-        workspace: 3,
-        x: 0,
-        y: 0,
-        w: 900,
-        h: 700,
-        address: "0xb"
-      }
-    ],
-    workspaces: [
-      {
-        n: 2,
-        windows: [{
-          pid: 10,
-          class: "chromium",
-          workspace: 2,
-          floating: true,
-          x: 100,
-          y: 80,
-          w: 1280,
-          h: 800
-        }]
-      },
-      {
-        n: 3,
-        windows: [{
-          pid: 11,
-          class: "com.mitchellh.ghostty",
-          workspace: 3,
-          x: 0,
-          y: 0,
-          w: 900,
-          h: 700
-        }]
-      }
-    ]
-  }
-  model.applyTerminalHints(stage, [
-    { pid: 10, cwd: "/home/hallas", cmd: ["chromium", "--profile-directory=Profile 1"] },
-    { pid: 11, cwd: "/home/hallas/Work/omadesk", cmd: ["nvim", "Overlay.qml"] }
-  ])
-  assert.strictEqual(stage.windows[0].profile, "Profile 1")
-  assert.ok(!stage.windows[0].cmd)
-  assert.strictEqual(stage.windows[1].cwd, "/home/hallas/Work/omadesk")
-  same(stage.windows[1].cmd, ["nvim", "Overlay.qml"])
-  const recipe = model.snapshotRecipe(stage, "Work", model.defaultExtras(), 2, "2026-08-22T12:00:00Z")
-  const chrome = recipe.workspaces.filter((w) => w.n === 2)[0].windows[0]
-  assert.strictEqual(chrome.profile, "Profile 1")
-  same(chrome.exec, ["chromium", "--profile-directory=Profile 1", "--new-window"])
+test("57 a floating window keeps its geometry through park and restore", function() {
+  // Nothing is relaunched now, so geometry only has to survive a move: the
+  // window itself carries it, and park/restore address windows by handle.
+  const clients = [
+    {
+      address: "0xa", class: "chromium", title: "Docs", floating: true,
+      workspace: { id: 2, name: "2" }, at: [100, 80], size: [1280, 800]
+    },
+    {
+      address: "0xb", class: "com.mitchellh.ghostty", title: "term",
+      workspace: { id: 3, name: "3" }, at: [0, 0], size: [900, 700]
+    }
+  ]
+  const wss = [
+    { id: 2, name: "2", monitor: "DP-1", monitorID: 0 },
+    { id: 3, name: "3", monitor: "DP-1", monitorID: 0 }
+  ]
+  const stage = model.parseStage(JSON.stringify(clients), JSON.stringify(wss))
+  const chrome = stage.windows.filter((w) => w.address === "0xa")[0]
   assert.strictEqual(chrome.w, 1280)
   assert.strictEqual(chrome.h, 800)
   assert.strictEqual(chrome.floating, true)
-  const term = recipe.workspaces.filter((w) => w.n === 3)[0].windows[0]
-  assert.strictEqual(term.cwd, "/home/hallas/Work/omadesk")
-  same(term.cmd, ["nvim", "Overlay.qml"])
-  const launches = model.launchMissingPlan(recipe, { windows: [], parked: [] }, "work").launches
-  const chromeLaunch = launches.filter((item) => item.n === 2)[0]
-  same(chromeLaunch.exec, ["chromium", "--profile-directory=Profile 1", "--new-window"])
-  assert.strictEqual(chromeLaunch.w, 1280)
-  assert.strictEqual(chromeLaunch.floating, true)
-  const chromeRules = model.launchExecRules(chromeLaunch)
-  assert.ok(chromeRules.indexOf("float") >= 0)
-  assert.ok(chromeRules.indexOf("size 1280 800") >= 0)
-  assert.ok(chromeRules.indexOf("move 100 80") >= 0)
-  const termLaunch = launches.filter((item) => item.n === 3)[0]
-  assert.ok(termLaunch.exec.indexOf("nvim") >= 0)
-  const termRules = model.launchExecRules(termLaunch)
-  assert.ok(termRules.indexOf("float") === -1)
-  assert.ok(termRules.indexOf("workspace 3") >= 0)
+  // Relaunch fields are no longer captured at all.
+  assert.strictEqual(chrome.cwd, undefined)
+  assert.strictEqual(chrome.cmd, undefined)
+  assert.strictEqual(chrome.profile, undefined)
+
+  const park = model.parkPlan(stage, "work")
+  const parkText = park.dispatches.join(" ")
+  assert.ok(parkText.indexOf("address:0xa") >= 0)
+  assert.ok(parkText.indexOf("address:0xb") >= 0)
+  park.dispatches.forEach((lua) => {
+    assert.ok(lua.indexOf("hl.dsp.window.move({") === 0)
+    assert.ok(/special:omadesk-work-[23]/.test(lua))
+  })
+  // Coming back puts each handle on its own numbered workspace again.
+  const back = model.restorePlan({ parked: [
+    { slug: "work", n: 2, address: "0xa" },
+    { slug: "work", n: 3, address: "0xb" }
+  ], monitors: ["DP-1"] }, "work", { id: "work", layout: [{ n: 2, monitor: "DP-1" }] })
+  const backText = back.dispatches.join(" ")
+  assert.ok(backText.indexOf('workspace = "2"') >= 0)
+  assert.ok(backText.indexOf('workspace = "3"') >= 0)
 })
 
 test("59 workspace tiledLayout toggle uses Omarchy ids and lua rules", function() {
@@ -1857,29 +1556,39 @@ test("59 workspace tiledLayout toggle uses Omarchy ids and lua rules", function(
   assert.strictEqual(model.hasHyprWorkspaceId(null), false)
   assert.strictEqual(
     model.workspaceLayoutRuleLua(3, "scrolling"),
-    'hl.workspace_rule({ workspace = "name:3", layout = "scrolling" })\n'
+    'hl.workspace_rule({ workspace = "3", layout = "scrolling" })\n'
   )
   assert.strictEqual(
     model.workspaceLayoutRuleLua("special:omadesk-call-1", "dwindle"),
     'hl.workspace_rule({ workspace = "special:omadesk-call-1", layout = "dwindle" })\n'
   )
-  assert.strictEqual(model.workspaceLayoutKeyword(3, "scrolling"), "name:3, layout:scrolling")
-  assert.strictEqual(model.workspaceLayoutSelector(1), "name:1")
-  assert.strictEqual(model.workspaceLayoutSelector("1"), "name:1")
-  assert.strictEqual(model.workspaceLayoutSelector(10), "name:10")
-  assert.strictEqual(model.workspaceLayoutSelector("-83"), "-83")
+  assert.strictEqual(model.workspaceLayoutKeyword(3, "scrolling"), "3, layout:scrolling")
+  // Numbered workspaces use the same bare selector Omarchy's Super+L writes, so
+  // omadesk and Super+L keep a single rule per workspace instead of two that
+  // shadow each other.
+  assert.strictEqual(model.workspaceLayoutSelector(1), "1")
+  assert.strictEqual(model.workspaceLayoutSelector("1"), "1")
+  assert.strictEqual(model.workspaceLayoutSelector(10), "10")
+  // A bare negative id is a relative selector in Hyprland and resolves to
+  // workspace 1, so it must never reach a rule.
+  assert.strictEqual(model.workspaceLayoutSelector("-83"), "")
+  assert.strictEqual(model.workspaceLayoutSelector(-98), "")
+  assert.strictEqual(model.workspaceLayoutRuleLua("-83", "dwindle"), "")
   assert.strictEqual(model.workspaceLayoutKeyword("special:omadesk-call-1", "scrolling"), "special:omadesk-call-1, layout:scrolling")
   assert.strictEqual(model.workspaceLayoutTarget({ n: 3, hyprId: 3 }, "writing", true), "3")
   assert.strictEqual(model.workspaceLayoutTarget({ n: 5, hyprId: 5 }, "main", true), "5")
-  assert.strictEqual(model.workspaceLayoutTarget({ n: 1, hyprId: -83 }, "call", false), "-83")
+  // Parked tiles report the negative id of their special workspace; the target
+  // has to name that workspace instead.
+  assert.strictEqual(model.workspaceLayoutTarget({ n: 1, hyprId: -83 }, "call", false), "special:omadesk-call-1")
+  assert.strictEqual(model.workspaceLayoutTarget({ n: 1, hyprId: -83 }, "call", true), "special:omadesk-call-1")
   assert.strictEqual(model.workspaceLayoutTarget({ n: 2 }, "writing", false), "special:omadesk-writing-2")
   assert.strictEqual(model.workspaceLayoutTarget({ n: 1 }, "", true), "1")
   assert.strictEqual(model.workspaceLayoutTarget({ n: 1, vacant: true }, "writing", true), "1")
-  assert.strictEqual(model.workspaceLayoutTarget({ n: 1, hyprId: -83 }, "call", true), "-83")
   assert.strictEqual(model.workspaceLayoutTarget({ n: 4, vacant: true }, "writing", false), "special:omadesk-writing-4")
   assert.strictEqual(model.workspaceLayoutTarget({ n: 0 }, "writing", true), "")
   assert.strictEqual(model.workspaceLayoutPersistId("3"), "3")
   assert.strictEqual(model.workspaceLayoutPersistId("special:omadesk-call-1"), "omadesk-call-1")
+  assert.strictEqual(model.workspaceLayoutPersistId("-83"), "")
   assert.strictEqual(
     model.workspaceLayoutsDir("/home/ada", ""),
     "/home/ada/.local/state/omarchy/workspace-layouts"
@@ -1965,15 +1674,10 @@ test("61 next empty workspace is the first free n, one vacant tile", function() 
   assert.strictEqual(model.sameDeskMoveDispatch("0xaaa", 1, 4, "writing", true).indexOf('workspace = "4"') >= 0, true)
 })
 
-test("62 space count uses live occupied tiles, not an empty recipe", function() {
-  const main = { id: "main", name: "Main", extras: model.defaultExtras(), workspaces: [] }
-  const testDesk = {
-    id: "test",
-    name: "Test",
-    extras: model.defaultExtras(),
-    workspaces: [{ n: 1, windows: [{ class: "foot", exec: ["foot"] }] }]
-  }
-  const state = { version: 1, currentId: "main", desks: [main, testDesk] }
+test("62 space count uses live occupied tiles, and a desk holding nothing is zero", function() {
+  const main = { id: "main", name: "Main", extras: model.defaultExtras() }
+  const testDesk = { id: "test", name: "Test", extras: model.defaultExtras() }
+  const state = { version: 2, currentId: "main", desks: [main, testDesk] }
   const live = {
     windows: [
       { address: "0x1", workspace: 1, class: "foot" },
@@ -1986,13 +1690,16 @@ test("62 space count uses live occupied tiles, not an empty recipe", function() 
   }
   assert.ok(model.deskSpaceMeta(main).indexOf("0 Spaces") === 0)
   assert.ok(model.deskSpaceMeta(main, live, "main").indexOf("2 Spaces") === 0)
-  assert.ok(model.deskSpaceMeta(testDesk, live, "main").indexOf("1 Space ·") === 0)
+  // test holds nothing: not current, no lots. It counts zero rather than
+  // reporting a workspace it no longer has.
+  assert.ok(model.deskSpaceMeta(testDesk, live, "main").indexOf("0 Spaces") === 0)
   const cards = model.pickerCards(state, "", live)
   const mainCard = cards.filter((c) => c.id === "main")[0]
   const testCard = cards.filter((c) => c.id === "test")[0]
   assert.ok(mainCard.meta.indexOf("2 Spaces") === 0)
   assert.strictEqual(mainCard.tiles.filter((t) => !t.vacant).length, 2)
-  assert.ok(testCard.meta.indexOf("1 Space ·") === 0)
+  assert.ok(testCard.meta.indexOf("0 Spaces") === 0)
+  same(testCard.tiles, [])
   const parked = {
     windows: live.windows,
     workspaces: live.workspaces,
@@ -2012,24 +1719,38 @@ test("63 workspace layout apply argv writes Omarchy lua then evals", function() 
   assert.strictEqual(argv[1], "-c")
   assert.ok(argv[2].indexOf("mkdir -p --") >= 0)
   assert.ok(argv[2].indexOf("hyprctl eval") >= 0)
-  assert.ok(argv[2].indexOf("omadesk-*.lua") >= 0)
   assert.ok(argv[2].indexOf("hyprctl reload config-only") >= 0)
   assert.ok(argv[2].indexOf("hyprctl keyword workspace") === -1)
+  assert.strictEqual(argv.length, 7)
   assert.strictEqual(argv[4], dir)
-  assert.strictEqual(argv[5], 'hl.workspace_rule({ workspace = "name:2", layout = "scrolling" })')
+  assert.strictEqual(argv[5], 'hl.workspace_rule({ workspace = "2", layout = "scrolling" })')
   assert.strictEqual(argv[6], dir + "/2.lua")
-  assert.ok(argv[7].indexOf('workspace = "2"') >= 0)
-  assert.ok(argv[7].indexOf("enabled = false") >= 0)
-  const withSlug = model.workspaceLayoutApplyArgv(dir, 1, "dwindle", "main")
-  assert.strictEqual(withSlug[5], 'hl.workspace_rule({ workspace = "name:1", layout = "dwindle" })')
-  assert.strictEqual(withSlug[6], dir + "/1.lua")
-  assert.ok(withSlug[7].indexOf('workspace = "1"') >= 0)
-  assert.ok(withSlug[7].indexOf('workspace = "special:omadesk-main-1"') >= 0)
-  assert.ok(withSlug[7].indexOf("enabled = false") >= 0)
+
+  // Toggling workspace 2 must leave workspace 1 alone: it may only write 2.lua,
+  // and the single rule it evals may only name workspace 2. A rule for "1" or a
+  // second selector such as "name:1" would take ownership of workspace 1's
+  // layout away from 1.lua.
+  const writes = argv.slice(4).filter((arg) => arg.indexOf(dir + "/") === 0)
+  same(writes, [dir + "/2.lua"])
+  assert.ok(argv[5].indexOf('"1"') === -1)
+  assert.ok(argv[5].indexOf("name:1") === -1)
+  assert.ok(argv.slice(3).join("\n").indexOf(dir + "/1.lua") === -1)
+
+  // The cleanup glob only covers bare-negative-id files, which are the ones that
+  // resolve to workspace 1. It must not sweep away sibling numbered files.
+  assert.ok(argv[2].indexOf('"$1"/-*.lua') >= 0)
+  assert.ok(argv[2].indexOf('"$1"/*.lua') === -1)
+
+  const one = model.workspaceLayoutApplyArgv(dir, 1, "dwindle")
+  assert.strictEqual(one[5], 'hl.workspace_rule({ workspace = "1", layout = "dwindle" })')
+  assert.strictEqual(one[6], dir + "/1.lua")
   const special = model.workspaceLayoutApplyArgv(dir, "special:omadesk-call-1", "dwindle")
   assert.strictEqual(special[6], dir + "/omadesk-call-1.lua")
   assert.strictEqual(special[5], 'hl.workspace_rule({ workspace = "special:omadesk-call-1", layout = "dwindle" })')
-  assert.strictEqual(special[7], "")
+  // A parked lot never persists under its negative id, so the loader cannot
+  // replay it as a relative selector against workspace 1.
+  same(model.workspaceLayoutApplyArgv(dir, "-83", "dwindle"), [])
+  same(model.workspaceLayoutApplyArgv(dir, -98, "scrolling"), [])
   same(model.workspaceLayoutApplyArgv(dir, "", "scrolling"), [])
   same(model.workspaceLayoutApplyArgv("", 2, "scrolling"), [])
 })
@@ -2068,95 +1789,117 @@ test("65 extras theme applies now only on the current desk", function() {
   assert.strictEqual(model.extrasThemeNow(writing, extras, "unnamed"), null)
 })
 
-test("66 updateDesk keeps monitor sizes from the stage", function() {
+test("66 refreshDeskLayout records the live workspace-to-monitor map", function() {
   const monitors = [
     { name: "DP-1", width: 2560, height: 1440, disabled: false, focused: true, activeWorkspace: { id: 1, name: "1" } }
   ]
   const stage = model.parseStage(clientsText, workspacesText, JSON.stringify(monitors))
-  const recipe = model.snapshotRecipe(stage, "Wide", model.defaultExtras(), 3, "2026-08-21T12:00:00Z")
-  assert.strictEqual(recipe.monitorSizes["DP-1"].w, 2560)
-  assert.strictEqual(recipe.monitorSizes["DP-1"].h, 1440)
-  const saved = model.saveDesk(model.emptyState(), recipe)
+  const row = model.newDeskRow(stage, "Wide", model.defaultExtras(), 3, "2026-08-21T12:00:00Z")
+  // A desk row is identity only: no window recipe, no workspace list.
+  assert.strictEqual(row.name, "Wide")
+  assert.strictEqual(row.lastWorkspace, 3)
+  assert.strictEqual(row.workspaces, undefined)
+  const saved = model.saveDesk(model.emptyState(), row)
   const id = saved.desks[0].id
-  const updated = model.updateDesk(saved, id, stage, "2026-08-22T12:00:00Z")
+  assert.strictEqual(saved.desks[0].workspaces, undefined)
+
+  const updated = model.refreshDeskLayout(saved, id, stage, "2026-08-22T12:00:00Z")
   const desk = updated.desks.filter((d) => d.id === id)[0]
-  assert.ok(desk.monitorSizes)
-  assert.strictEqual(desk.monitorSizes["DP-1"].w, 2560)
-  assert.strictEqual(desk.monitorSizes["DP-1"].h, 1440)
-  const noMons = model.updateDesk(saved, id, model.parseStage(clientsText, workspacesText), "2026-08-22T12:01:00Z")
-  const kept = noMons.desks.filter((d) => d.id === id)[0]
-  assert.strictEqual(kept.monitorSizes["DP-1"].w, 2560)
-  const ultrawide = model.parseStage(clientsText, workspacesText, JSON.stringify([
-    { name: "DP-1", width: 3440, height: 1440, disabled: false, focused: true, activeWorkspace: { id: 1, name: "1" } }
-  ]))
-  const resized = model.updateDesk(saved, id, ultrawide, "2026-08-22T13:00:00Z")
-  assert.strictEqual(resized.desks.filter((d) => d.id === id)[0].monitorSizes["DP-1"].w, 3440)
+  assert.strictEqual(desk.updatedAt, "2026-08-22T12:00:00Z")
+  assert.ok(desk.layout.length)
+  assert.strictEqual(desk.layout[0].monitor, "DP-1")
+  // Identity survives the refresh; only placement metadata moves.
+  assert.strictEqual(desk.name, "Wide")
+  assert.strictEqual(desk.workspaces, undefined)
 })
 
-test("67 moveWorkspace across desks keeps windows on the moved workspace", function() {
-  const before = model.demoDesks()
-  const writingBefore = before.desks.filter((d) => d.id === "writing")[0]
-  const zed = writingBefore.workspaces.filter((w) => w.n === 1)[0]
-  assert.ok(zed)
-  assert.strictEqual(zed.windows[0].class, "dev.zed.Zed")
-  const after = model.moveWorkspace(before, "writing", 1, "call")
-  const writing = after.desks.filter((d) => d.id === "writing")[0]
-  const call = after.desks.filter((d) => d.id === "call")[0]
-  assert.strictEqual(writing.workspaces.filter((w) => w.n === 1).length, 0)
-  assert.ok(writing.workspaces.filter((w) => w.n === 2).length)
-  const moved = call.workspaces.filter((w) => (w.windows || []).some((win) => win.class === "dev.zed.Zed"))[0]
-  assert.ok(moved)
-  assert.strictEqual(moved.windows[0].title, "charcana")
-  assert.strictEqual(call.workspaces.filter((w) => w.n === 1).length, 1)
-  assert.ok(moved.n >= 1 && moved.n <= 10)
-  assert.ok(moved.n !== 1)
-  assert.strictEqual(moved.windows[0].class, zed.windows[0].class)
-  assert.strictEqual(moved.windows[0].title, zed.windows[0].title)
-  assert.strictEqual(before.desks.filter((d) => d.id === "writing")[0].workspaces.filter((w) => w.n === 1).length, 1)
+test("67 workspace drop on another desk moves the windows Hyprland holds", function() {
+  const clients = [
+    { address: "0xa1", class: "foot", title: "one", workspace: { id: 1, name: "1" }, at: [0, 0], size: [100, 100] },
+    { address: "0xa2", class: "mpv", title: "two", workspace: { id: 1, name: "1" }, at: [0, 0], size: [100, 100] },
+    { address: "0xb1", class: "chromium", title: "three", workspace: { id: 2, name: "2" }, at: [0, 0], size: [100, 100] },
+    { address: "0xc1", class: "zed", title: "parked", workspace: { id: -90, name: "special:omadesk-call-1" }, at: [0, 0], size: [100, 100] }
+  ]
+  const wss = [
+    { id: 1, name: "1", monitor: "DP-1", monitorID: 0 },
+    { id: 2, name: "2", monitor: "DP-1", monitorID: 0 },
+    { id: -90, name: "special:omadesk-call-1", monitor: "DP-1", monitorID: 0 }
+  ]
+  const stage = model.parseStage(JSON.stringify(clients), JSON.stringify(wss))
+  assert.strictEqual(stage.parked.length, 1)
+
+  // Live desk to a parked desk: every window on workspace 1 goes to the lot.
+  const out = model.moveWorkspaceToDeskPlan(stage, "here", true, 1, "call", false)
+  same(out.dispatches, [
+    'hl.dsp.window.move({ workspace = "special:omadesk-call-2", follow = false, window = "address:0xa1" })',
+    'hl.dsp.window.move({ workspace = "special:omadesk-call-2", follow = false, window = "address:0xa2" })'
+  ])
+  // Lot 1 is taken on call, so the arrival lands on the first free number.
+  assert.ok(out.batch.indexOf("omadesk-call-2") > 0)
+
+  // Parked desk back to the live desk, onto a free workspace number.
+  const back = model.moveWorkspaceToDeskPlan(stage, "call", false, 1, "here", true)
+  same(back.dispatches, [
+    'hl.dsp.window.move({ workspace = "3", follow = false, window = "address:0xc1" })'
+  ])
+
+  // Nothing to move, and same-desk drops are not this planner's job.
+  same(model.moveWorkspaceToDeskPlan(stage, "here", true, 9, "call", false).dispatches, [])
+  same(model.moveWorkspaceToDeskPlan(stage, "call", false, 1, "call", false).dispatches, [])
 })
 
-test("68 moveWorkspace reorders workspaces on the same desk", function() {
-  const before = model.demoDesks()
-  const writingBefore = before.desks.filter((d) => d.id === "writing")[0]
-  same(writingBefore.workspaces.map((w) => w.n), [1, 2, 3])
-  const after = model.moveWorkspace(before, "writing", 3, "writing", 0)
-  const writing = after.desks.filter((d) => d.id === "writing")[0]
-  same(writing.workspaces.map((w) => w.n), [3, 1, 2])
-  assert.strictEqual(writing.workspaces[0].windows[0].class, writingBefore.workspaces[2].windows[0].class)
-  assert.strictEqual(writing.workspaces[0].windows[0].title, writingBefore.workspaces[2].windows[0].title)
-  const tiles = model.deskTiles(writing)
-  same(tiles.map((t) => t.n), [3, 1, 2])
+test("68 same-desk workspace drop swaps both sides, never merges them", function() {
+  const clients = [
+    { address: "0xa1", class: "foot", title: "a", workspace: { id: 1, name: "1" }, at: [0, 0], size: [100, 100] },
+    { address: "0xa2", class: "mpv", title: "a2", workspace: { id: 1, name: "1" }, at: [0, 0], size: [100, 100] },
+    { address: "0xb1", class: "chromium", title: "b", workspace: { id: 3, name: "3" }, at: [0, 0], size: [100, 100] }
+  ]
+  const wss = [
+    { id: 1, name: "1", monitor: "DP-1", monitorID: 0 },
+    { id: 3, name: "3", monitor: "DP-1", monitorID: 0 }
+  ]
+  const stage = model.parseStage(JSON.stringify(clients), JSON.stringify(wss))
+
+  // Both directions are emitted, so neither side is left sharing a workspace.
+  const swap = model.swapWorkspacePlan(stage, "here", true, 1, 3)
+  same(swap.dispatches, [
+    'hl.dsp.window.move({ workspace = "3", follow = false, window = "address:0xa1" })',
+    'hl.dsp.window.move({ workspace = "3", follow = false, window = "address:0xa2" })',
+    'hl.dsp.window.move({ workspace = "1", follow = false, window = "address:0xb1" })'
+  ])
+  // Addresses are read before anything moves, so apply order cannot merge them.
+  assert.strictEqual(swap.dispatches.filter((d) => d.indexOf("0xa1") >= 0).length, 1)
+
+  // Swapping into an empty workspace still moves the occupied side across.
+  same(model.swapWorkspacePlan(stage, "here", true, 1, 5).dispatches, [
+    'hl.dsp.window.move({ workspace = "5", follow = false, window = "address:0xa1" })',
+    'hl.dsp.window.move({ workspace = "5", follow = false, window = "address:0xa2" })'
+  ])
+
+  same(model.swapWorkspacePlan(stage, "here", true, 2, 2).dispatches, [])
+  same(model.swapWorkspacePlan(stage, "here", true, 1, 0).dispatches, [])
+  same(model.swapWorkspacePlan(stage, "here", true, 1, 11).dispatches, [])
 })
 
-test("69 moveWorkspace refuses a full destination instead of dropping windows", function() {
-  const state = {
-    version: 1,
-    currentId: "src",
-    desks: [
-      {
-        id: "src",
-        name: "Src",
-        extras: model.defaultExtras(),
-        workspaces: [{ n: 1, windows: [{ class: "mpv", title: "clip" }] }]
-      },
-      {
-        id: "full",
-        name: "Full",
-        extras: model.defaultExtras(),
-        workspaces: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => ({
-          n: n,
-          windows: [{ class: "foot", title: "t" + n }]
-        }))
-      }
-    ]
-  }
-  const after = model.moveWorkspace(state, "src", 1, "full")
-  const src = after.desks.filter((d) => d.id === "src")[0]
-  const full = after.desks.filter((d) => d.id === "full")[0]
-  assert.strictEqual(src.workspaces.length, 1)
-  assert.strictEqual(src.workspaces[0].windows[0].class, "mpv")
-  assert.strictEqual(full.workspaces.length, 10)
-  assert.strictEqual(full.workspaces.filter((w) => (w.windows || []).some((win) => win.class === "mpv")).length, 0)
+test("69 a parked desk swaps inside its own lots, not on 1-10", function() {
+  const clients = [
+    { address: "0xp1", class: "foot", title: "p1", workspace: { id: -91, name: "special:omadesk-call-1" }, at: [0, 0], size: [100, 100] },
+    { address: "0xp2", class: "mpv", title: "p2", workspace: { id: -92, name: "special:omadesk-call-2" }, at: [0, 0], size: [100, 100] },
+    { address: "0xz1", class: "zed", title: "other", workspace: { id: 1, name: "1" }, at: [0, 0], size: [100, 100] }
+  ]
+  const wss = [
+    { id: 1, name: "1", monitor: "DP-1", monitorID: 0 },
+    { id: -91, name: "special:omadesk-call-1", monitor: "DP-1", monitorID: 0 },
+    { id: -92, name: "special:omadesk-call-2", monitor: "DP-1", monitorID: 0 }
+  ]
+  const stage = model.parseStage(JSON.stringify(clients), JSON.stringify(wss))
+  const swap = model.swapWorkspacePlan(stage, "call", false, 1, 2)
+  same(swap.dispatches, [
+    'hl.dsp.window.move({ workspace = "special:omadesk-call-2", follow = false, window = "address:0xp1" })',
+    'hl.dsp.window.move({ workspace = "special:omadesk-call-1", follow = false, window = "address:0xp2" })'
+  ])
+  // The live window on workspace 1 belongs to whoever is current, not to call.
+  assert.strictEqual(swap.batch.indexOf("0xz1"), -1)
 })
 
 test("70 layout apply uses Super+L workspace ids and does not pin a second rule", function() {
@@ -2168,42 +1911,165 @@ test("70 layout apply uses Super+L workspace ids and does not pin a second rule"
   const live = { n: 3, hyprId: 3 }
   const lot = { n: 1, hyprId: -83 }
   assert.strictEqual(model.workspaceLayoutTarget(live, "writing", true), "3")
-  assert.strictEqual(model.workspaceLayoutTarget(lot, "call", true), "-83")
-  assert.strictEqual(model.workspaceLayoutTarget(lot, "call", false), "-83")
+  assert.strictEqual(model.workspaceLayoutTarget(lot, "call", true), "special:omadesk-call-1")
+  assert.strictEqual(model.workspaceLayoutTarget(lot, "call", false), "special:omadesk-call-1")
 
   const dir = "/home/ada/.local/state/omarchy/workspace-layouts"
-  const first = model.workspaceLayoutApplyArgv(dir, model.workspaceLayoutTarget(live, "writing", true), model.nextTiledLayout("dwindle"), "writing")
-  const second = model.workspaceLayoutApplyArgv(dir, model.workspaceLayoutTarget(live, "writing", true), model.nextTiledLayout("scrolling"), "writing")
+  const first = model.workspaceLayoutApplyArgv(dir, model.workspaceLayoutTarget(live, "writing", true), model.nextTiledLayout("dwindle"))
+  const second = model.workspaceLayoutApplyArgv(dir, model.workspaceLayoutTarget(live, "writing", true), model.nextTiledLayout("scrolling"))
   assert.ok(first.length)
   assert.ok(second.length)
   assert.strictEqual(first[6], dir + "/3.lua")
   assert.strictEqual(second[6], dir + "/3.lua")
   assert.strictEqual(model.workspaceLayoutPersistId("3"), "3")
-  assert.ok(first[5].indexOf('workspace = "name:3"') >= 0)
+  assert.ok(first[5].indexOf('workspace = "3"') >= 0)
   assert.ok(first[5].indexOf('layout = "scrolling"') >= 0)
-  assert.ok(second[5].indexOf('workspace = "name:3"') >= 0)
+  assert.ok(second[5].indexOf('workspace = "3"') >= 0)
   assert.ok(second[5].indexOf('layout = "dwindle"') >= 0)
   assert.ok(first[5].indexOf("special:") === -1)
   assert.ok(second[5].indexOf("special:") === -1)
-  assert.ok(first[7].indexOf('workspace = "3"') >= 0)
-  assert.ok(first[7].indexOf('special:omadesk-writing-3') >= 0)
-  assert.ok(first[7].indexOf("enabled = false") >= 0)
-  assert.ok(second[7].indexOf('special:omadesk-writing-3') >= 0)
   assert.notStrictEqual(first[5], second[5])
-  assert.ok(first[2].indexOf("omadesk-*.lua") >= 0)
 
-  const lotArgv = model.workspaceLayoutApplyArgv(dir, model.workspaceLayoutTarget(lot, "call", true), "scrolling", "call")
-  assert.strictEqual(lotArgv[6], dir + "/-83.lua")
-  assert.ok(lotArgv[5].indexOf('workspace = "-83"') >= 0)
-  assert.ok(lotArgv[5].indexOf("special:") === -1)
-  assert.strictEqual(lotArgv[7], "")
-  assert.strictEqual(model.workspaceLayoutPersistId("-83"), "-83")
-  assert.strictEqual(model.workspaceLayoutRuleLua("-83", "dwindle"), 'hl.workspace_rule({ workspace = "-83", layout = "dwindle" })\n')
-  assert.strictEqual(model.workspaceLayoutKeyword("-83", "dwindle"), "-83, layout:dwindle")
-  assert.ok(model.workspaceLayoutUnpinLua("main", 1).indexOf('workspace = "1"') >= 0)
-  assert.ok(model.workspaceLayoutUnpinLua("main", 1).indexOf('special:omadesk-main-1') >= 0)
-  assert.ok(model.workspaceLayoutUnpinLua("", 1).indexOf('workspace = "1"') >= 0)
-  assert.ok(model.workspaceLayoutUnpinLua("", 1).indexOf("special:") === -1)
+  // Each apply writes one file and evals one rule, both naming only its own
+  // workspace, so toggling workspace 3 cannot reassign workspace 1's layout.
+  assert.strictEqual(first.length, 7)
+  assert.ok(first.slice(3).join("\n").indexOf(dir + "/1.lua") === -1)
+  assert.ok(first[5].indexOf('"1"') === -1)
+
+  // A parked lot persists under its special workspace name, never under the
+  // negative id Hyprland would read as an offset from the focused workspace.
+  const lotArgv = model.workspaceLayoutApplyArgv(dir, model.workspaceLayoutTarget(lot, "call", true), "scrolling")
+  assert.strictEqual(lotArgv[6], dir + "/omadesk-call-1.lua")
+  assert.strictEqual(lotArgv[5], 'hl.workspace_rule({ workspace = "special:omadesk-call-1", layout = "scrolling" })')
+  assert.ok(lotArgv[5].indexOf("-83") === -1)
+  assert.strictEqual(model.workspaceLayoutPersistId("-83"), "")
+  assert.strictEqual(model.workspaceLayoutRuleLua("-83", "dwindle"), "")
+  assert.strictEqual(model.workspaceLayoutKeyword("-83", "dwindle"), "")
+  assert.strictEqual(typeof model.workspaceLayoutUnpinLua, "undefined")
+})
+
+test("71 pane drop dispatch survives whatever the drag source reports", function() {
+  const addr = "0x55f11fe15110"
+  const moveTo3 = 'hl.dsp.window.move({ workspace = "3", follow = false, window = "address:0x55f11fe15110" })'
+  // Drag.source hands back a pane address that may already carry the prefix.
+  assert.strictEqual(model.sameDeskMoveDispatch("address:" + addr, 1, 3, "writing", true), moveTo3)
+  // fromWorkspaceN is undefined until a pane knows its tile, and an unknown
+  // origin must not be read as "same workspace" and swallowed.
+  assert.strictEqual(model.sameDeskMoveDispatch(addr, null, 3, "writing", true), moveTo3)
+  assert.strictEqual(model.sameDeskMoveDispatch(addr, undefined, 3, "writing", true), moveTo3)
+  // An unsaved desk drops with an empty slug and still has to land in a lot
+  // rather than on the bare number, which belongs to the live desk.
+  assert.strictEqual(
+    model.sameDeskMoveDispatch(addr, 1, 2, "", false),
+    'hl.dsp.window.move({ workspace = "special:omadesk-unnamed-2", follow = false, window = "address:0x55f11fe15110" })'
+  )
+  assert.strictEqual(model.sameDeskMoveDispatch(addr, 1, 11, "writing", true), "")
+  assert.strictEqual(model.sameDeskMoveDispatch('0x"evil', 1, 3, "writing", true), "")
+  assert.strictEqual(model.sameDeskMoveDispatch("0x\nevil", 1, 3, "writing", false), "")
+})
+
+test("72 a desk shows the windows Hyprland holds, and survives holding none", function() {
+  const clients = [
+    { address: "0xh1", class: "foot", title: "live", workspace: { id: 2, name: "2" }, at: [0, 0], size: [100, 100] },
+    { address: "0xp1", class: "mpv", title: "parked", workspace: { id: -91, name: "special:omadesk-call-1" }, at: [0, 0], size: [100, 100] },
+    { address: "0xp2", class: "zed", title: "parked2", workspace: { id: -93, name: "special:omadesk-call-3" }, at: [0, 0], size: [100, 100] }
+  ]
+  const wss = [
+    { id: 2, name: "2", monitor: "DP-1", monitorID: 0 },
+    { id: -91, name: "special:omadesk-call-1", monitor: "DP-1", monitorID: 0 },
+    { id: -93, name: "special:omadesk-call-3", monitor: "DP-1", monitorID: 0 }
+  ]
+  const stage = model.parseStage(JSON.stringify(clients), JSON.stringify(wss))
+  const here = { id: "here", name: "Here", extras: model.defaultExtras() }
+  const call = { id: "call", name: "Call", extras: model.defaultExtras() }
+  const gone = { id: "gone", name: "Gone", extras: model.defaultExtras() }
+
+  // The current desk is the live numbered workspaces, whatever they hold now.
+  same(model.deskTiles(model.deskPreviewSource(here, stage, "here"), 10, false).map((t) => t.n), [2])
+  // Any other desk is its lots, addressed by lot number.
+  same(model.deskTiles(model.deskPreviewSource(call, stage, "here"), 10, false).map((t) => t.n), [1, 3])
+  // A desk holding nothing shows nothing rather than replaying a stale recipe.
+  same(model.deskTiles(model.deskPreviewSource(gone, stage, "here"), 10, false), [])
+  assert.strictEqual(model.deskLife(gone, stage, "here"), "dead")
+
+  // Even handed a row that still carries an old window list, the preview refuses
+  // to render it: only Hyprland says where windows are.
+  const stale = {
+    id: "stale",
+    name: "Stale",
+    extras: model.defaultExtras(),
+    workspaces: [{ n: 5, windows: [{ class: "foot", title: "ghost" }] }]
+  }
+  const preview = model.deskPreviewSource(stale, stage, "here")
+  same(model.deskTiles(preview, 10, false), [])
+  assert.strictEqual(JSON.stringify(preview).indexOf("ghost"), -1)
+
+  // An empty desk is still a desk: the row survives and stays selectable.
+  const state = model.normalizeState({ version: 2, currentId: "here", desks: [here, call, gone] })
+  assert.strictEqual(state.desks.length, 3)
+  const row = state.desks.filter((d) => d.id === "gone")[0]
+  assert.strictEqual(row.name, "Gone")
+  const cards = model.pickerCards(state, "", stage)
+  assert.strictEqual(cards.filter((c) => c.id === "gone").length, 1)
+  same(cards.filter((c) => c.id === "gone")[0].tiles, [])
+  assert.strictEqual(cards.filter((c) => c.id === "gone")[0].life, "dead")
+
+  // Switching into an empty desk is allowed; it then shows the live workspaces
+  // because whatever is on 1-10 now belongs to it.
+  const current = model.normalizeState({ version: 2, currentId: "gone", desks: [here, call, gone] })
+  assert.strictEqual(current.currentId, "gone")
+  assert.strictEqual(model.deskLife(gone, stage, "gone"), "live")
+})
+
+test("73 a v1 file upgrades to v2, keeping identity and dropping window recipes", function() {
+  const v1 = JSON.stringify({
+    version: 1,
+    currentId: "other",
+    desks: [
+      {
+        id: "other",
+        name: "Modoterra",
+        lastWorkspace: 1,
+        updatedAt: "2026-08-23T19:41:36.037Z",
+        extras: { dnd: "on", theme: "catppuccin", launchMissing: true },
+        workspaces: [
+          {
+            n: 2,
+            monitor: "DP-1",
+            windows: [
+              { class: "chromium", title: "Music", exec: ["chromium"], cwd: "/home/ada", profile: "Profile 1" }
+            ]
+          }
+        ]
+      }
+    ]
+  })
+  const read = model.readDesks(v1)
+  assert.strictEqual(read.ok, true)
+  const desk = read.state.desks[0]
+  assert.strictEqual(read.state.version, 2)
+  assert.strictEqual(read.state.currentId, "other")
+  // Identity and preferences carry over.
+  assert.strictEqual(desk.id, "other")
+  assert.strictEqual(desk.name, "Modoterra")
+  assert.strictEqual(desk.extras.dnd, "on")
+  assert.strictEqual(desk.extras.theme, "catppuccin")
+  assert.strictEqual(desk.lastWorkspace, 1)
+  // The window recipe and its relaunch fields are gone for good.
+  assert.strictEqual(desk.workspaces, undefined)
+  assert.strictEqual(desk.extras.launchMissing, undefined)
+  assert.strictEqual(JSON.stringify(desk).indexOf("Profile 1"), -1)
+  assert.strictEqual(JSON.stringify(desk).indexOf("/home/ada"), -1)
+  // The monitor map is recovered from the discarded recipe so restore still
+  // knows where workspace 2 belongs.
+  same(desk.layout, [{ n: 2, monitor: "DP-1" }])
+
+  // A v2 file round-trips unchanged, and an unknown version is refused.
+  const v2 = model.writeDesks(read.state)
+  const again = model.readDesks(v2)
+  assert.strictEqual(again.ok, true)
+  same(again.state, clone(read.state))
+  assert.strictEqual(model.readDesks(JSON.stringify({ version: 3, desks: [] })).ok, false)
 })
 
 console.log("ok")
