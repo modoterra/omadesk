@@ -111,11 +111,36 @@ function isWithinUtf8ByteLimit(value, limit) {
 function boundedFileReadArgv(path) {
   var file = String(path || "")
   if (!file) return []
+  // Pathname [ -f ]/stat then head follows symlinks and can swap desks.json after the check.
   return [
-    "bash",
+    "python3",
+    "-I",
     "-c",
-    "file=$1; limit=$2; [ -e \"$file\" ] || exit 3; [ -f \"$file\" ] || exit 4; size=$(stat -Lc %s -- \"$file\") || exit 4; [ \"$size\" -le \"$limit\" ] || exit 5; exec head -c \"$((limit + 1))\" -- \"$file\"",
-    "omadesk-read",
+    "import errno, os, stat, sys\n" +
+      "path = sys.argv[1]\n" +
+      "limit = int(sys.argv[2])\n" +
+      "flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC\n" +
+      "try:\n" +
+      "    fd = os.open(path, flags)\n" +
+      "except OSError as err:\n" +
+      "    sys.exit(3 if err.errno == errno.ENOENT else 4)\n" +
+      "try:\n" +
+      "    info = os.fstat(fd)\n" +
+      "    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():\n" +
+      "        sys.exit(4)\n" +
+      "    if info.st_size > limit:\n" +
+      "        sys.exit(5)\n" +
+      "    left = min(info.st_size, limit)\n" +
+      "    while left > 0:\n" +
+      "        chunk = os.read(fd, left)\n" +
+      "        if not chunk:\n" +
+      "            break\n" +
+      "        sys.stdout.buffer.write(chunk)\n" +
+      "        left -= len(chunk)\n" +
+      "except OSError:\n" +
+      "    sys.exit(4)\n" +
+      "finally:\n" +
+      "    os.close(fd)\n",
     file,
     String(MAX_DESKS_FILE_BYTES_VALUE)
   ]

@@ -2,6 +2,8 @@
 
 const fs = require("fs")
 const path = require("path")
+const os = require("os")
+const { spawnSync } = require("child_process")
 const vm = require("vm")
 const assert = require("assert")
 
@@ -25,6 +27,15 @@ function clone(value) {
 
 function same(actual, expected) {
   assert.deepStrictEqual(clone(actual), expected)
+}
+
+function runBoundedFileRead(file) {
+  const argv = model.boundedFileReadArgv(file)
+  assert.ok(Array.isArray(argv) && argv.length >= 3)
+  return spawnSync(argv[0], argv.slice(1), {
+    timeout: 3000,
+    maxBuffer: model.maxDesksFileBytes() + 4096
+  })
 }
 
 var tests = 0
@@ -2224,11 +2235,68 @@ test("75 compositor parsing and rendered models have hard cardinality and string
 })
 
 test("76 file and compositor collectors are bounded at the command boundary", function() {
+  same(model.boundedFileReadArgv(""), [])
   const readArgv = model.boundedFileReadArgv("/tmp/desks.json")
-  assert.strictEqual(readArgv[0], "bash")
-  assert.ok(readArgv.join("\n").indexOf("stat -Lc %s") >= 0)
-  assert.ok(readArgv.join("\n").indexOf("head -c") >= 0)
+  const readScript = readArgv.join("\n")
+  assert.ok(readScript.indexOf("O_NOFOLLOW") >= 0)
+  assert.ok(readScript.indexOf("O_NONBLOCK") >= 0)
+  assert.ok(readScript.indexOf("fstat") >= 0)
+  assert.ok(readScript.indexOf("stat -L") === -1)
+  assert.ok(readScript.indexOf("[ -f ") === -1)
+  assert.ok(readScript.indexOf("head -c") === -1)
+  assert.strictEqual(readArgv[readArgv.length - 2], "/tmp/desks.json")
   assert.strictEqual(readArgv[readArgv.length - 1], String(model.maxDesksFileBytes()))
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "omadesk-read-"))
+  try {
+    const body = '{"version":2,"currentId":null,"desks":[]}\n'
+    const regular = path.join(dir, "desks.json")
+    fs.writeFileSync(regular, body)
+    const ok = runBoundedFileRead(regular)
+    assert.strictEqual(ok.status, 0, String(ok.stderr))
+    assert.strictEqual(String(ok.stdout), body)
+
+    const missing = runBoundedFileRead(path.join(dir, "missing.json"))
+    assert.strictEqual(missing.status, 3)
+
+    const link = path.join(dir, "link.json")
+    fs.symlinkSync(regular, link)
+    const followed = runBoundedFileRead(link)
+    assert.notStrictEqual(followed.status, 0)
+    assert.notStrictEqual(followed.status, 5)
+
+    const nested = path.join(dir, "subdir")
+    fs.mkdirSync(nested)
+    const asDir = runBoundedFileRead(nested)
+    assert.notStrictEqual(asDir.status, 0)
+    assert.notStrictEqual(asDir.status, 5)
+
+    const fifo = path.join(dir, "fifo")
+    const madeFifo = spawnSync("mkfifo", ["--", fifo], { timeout: 3000 })
+    assert.strictEqual(madeFifo.status, 0, String(madeFifo.stderr || madeFifo.error))
+    const fifoRead = runBoundedFileRead(fifo)
+    assert.notStrictEqual(fifoRead.error && fifoRead.error.code, "ETIMEDOUT")
+    assert.notStrictEqual(fifoRead.status, 0)
+    assert.notStrictEqual(fifoRead.status, 5)
+
+    const oversized = path.join(dir, "big.json")
+    fs.writeFileSync(oversized, Buffer.alloc(model.maxDesksFileBytes() + 1, 0x61))
+    const tooBig = runBoundedFileRead(oversized)
+    assert.strictEqual(tooBig.status, 5)
+    assert.strictEqual(String(tooBig.stdout || ""), "")
+
+    const foreign = "/etc/passwd"
+    if (fs.existsSync(foreign)) {
+      const st = fs.statSync(foreign)
+      if (st.isFile() && typeof process.getuid === "function" && st.uid !== process.getuid()) {
+        const other = runBoundedFileRead(foreign)
+        assert.notStrictEqual(other.status, 0)
+        assert.notStrictEqual(other.status, 5)
+      }
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
 
   for (const query of ["clients", "workspaces", "monitors"]) {
     const argv = model.boundedHyprctlArgv(query)
